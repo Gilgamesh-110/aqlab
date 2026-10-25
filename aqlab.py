@@ -409,18 +409,24 @@ def cmd_decode(args):
 
 
 def manifest_min_sdk(proj):
-    """minSdkVersion from a decoded manifest, or None when absent/unresolvable."""
+    """minSdkVersion from a decoded project, or None when absent/unresolvable.
+    Prefers the manifest; falls back to apktool.yml, which carries the resolved
+    value for APKs whose manifest declares no <uses-sdk> element."""
     man = Path(proj) / "AndroidManifest.xml"
-    if not man.exists():
-        return None
-    txt = man.read_bytes().decode("utf-8", "replace")
-    m = re.search(r'minSdkVersion\s*=\s*"([^"]+)"', txt)
-    if not m or m.group(1).startswith("@"):
-        return None
-    try:
-        return int(m.group(1))
-    except ValueError:
-        return None
+    if man.exists():
+        txt = man.read_bytes().decode("utf-8", "replace")
+        m = re.search(r'minSdkVersion\s*=\s*"([^"]+)"', txt)
+        if m and not m.group(1).startswith("@"):
+            try:
+                return int(m.group(1))
+            except ValueError:
+                pass
+    yml = Path(proj) / "apktool.yml"
+    if yml.exists():
+        m = re.search(r"minSdkVersion:\s*'?(\d+)'?", yml.read_text(encoding="utf-8", errors="replace"))
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def patch_rtl(proj, dry=False, quiet=False, allow_old_sdk=False):

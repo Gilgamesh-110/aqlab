@@ -288,6 +288,23 @@ def test_min_sdk_guard(tmp):
     check("modern minSdk passes",
           'supportsRtl="true"' in (modern / "AndroidManifest.xml").read_text(encoding="utf-8"))
 
+    # APKs whose manifest carries no <uses-sdk>: apktool.yml holds the resolved value
+    ymlproj = Path(tmp) / "ymlproj"
+    (ymlproj / "res" / "values").mkdir(parents=True)
+    (ymlproj / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <application android:label="x"/>\n'
+        '</manifest>\n', encoding="utf-8")
+    (ymlproj / "apktool.yml").write_text(
+        "sdkInfo:\n  minSdkVersion: 15\n  targetSdkVersion: 34\n", encoding="utf-8")
+    check("apktool.yml fallback read", A.manifest_min_sdk(ymlproj) == 15)
+    try:
+        A.patch_rtl(ymlproj)
+        check("yamlless manifest still guarded", False, "should have raised")
+    except SystemExit:
+        check("yamlless manifest still guarded", True)
+
 
 def test_scan(proj):
     rc = A.cmd_scan(argparse.Namespace(target=str(proj), json=True, quiet=True))
