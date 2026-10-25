@@ -22,8 +22,40 @@
 **`aqlab` يتولى الجزء اللي مو ترجمة** — اتجاه الواجهة، ترحيل الخصائص، مخاطر
 الـbidi في Unicode، وتهريب موارد أندرويد.
 
+## جرّبها بسرعة
+
+ما تحتاج APK ولا Android SDK لهذا الجزء — عندنا مشروع مفكوك صغير بالريبو،
+ومقصود إنه يحتوي المصايد:
+
+```sh
+git clone https://github.com/Gilgamesh-110/aqlab && cd aqlab
+python aqlab.py rtl   examples/demo-project
+python aqlab.py apply examples/demo-project --tsv examples/ar.tsv
+python aqlab.py lint  examples/demo-project
+```
+
+```
+[PATCH] AndroidManifest.xml: android:supportsRtl="true"
+[PATCH] res/layout/activity_main.xml: 11 attribute(s)
+[PATCH] res/layout/list_item.xml: 6 attribute(s)
+[PATCH] res/values/styles.xml: 2 attribute(s)
+[DONE] 4 file(s) updated
+[DONE] 12 translation(s) -> examples/demo-project/res/values-ar/strings.xml
+[FINDING] lint res/values-ar: 12/12 translated (100.0%)
+[OK] 0 error(s), 0 warning(s)
+```
+
+فيه layout عنده `paddingLeft` **و** `paddingStart` سوا، و`<style>` يحمل الاتجاه
+داخل قيمة `<item>`، ومرجع `?listPreferredItemPaddingLeft` — الثلاثة اللي تكسر أي
+ترحيل ساذج.
+
+<p align="center">
+  <img src="assets/before-after.svg" alt="نفس الشاشة قبل وبعد، مع الخصائص اللي تغيّرت" width="100%">
+</p>
+
 ## المحتويات
 
+- [جرّبها بسرعة](#جرّبها-بسرعة)
 - [ليش](#ليش)
 - [التنصيب](#التنصيب)
 - [البدء السريع](#البدء-السريع)
@@ -218,13 +250,22 @@ fix:      المجلد test\u200f.    U+200F (علامة من اليمين لل�
 Python 3.9+، `apktool`، و Android SDK build-tools (`aapt2`, `zipalign`,
 `apksigner`). ما شي غير — بلا اعتماديات pip، بلا `lxml`، بلا `androguard`.
 
+## الوثائق
+
+| | |
+|---|---|
+| [docs/bidi.md](docs/bidi.md) | النسخة المطوّلة عن bidi: الخوارزمية، أي علامة تستعمل ومتى، وشنو يقدر الـlinter يشوف وشنو ما يقدر |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | `duplicate attribute`، `minSdkVersion`، أدوات ناقصة، تطبيق معاد بناؤه يسوي crash، ترجمات ما تظهر |
+| [CHANGELOG.md](CHANGELOG.md) | سجل الإصدارات |
+| [SECURITY.md](SECURITY.md) | نموذج التهديد، نظافة مفاتيح التوقيع، إدخال APK غير موثوق |
+
 ## المساهمة
 
 شوف [CONTRIBUTING.md](CONTRIBUTING.md). مجموعة الاختبار `assert`s عادية وتشتغل
 بأي مكان:
 
 ```sh
-python tests/test_aqlab.py       # 60 فحص، بلا framework، بلا شبكة، بلا apktool
+python tests/test_aqlab.py       # 64 فحص، بلا framework، بلا شبكة، بلا apktool
 ```
 
 الأكثر طلباً: التحقق من صيغ الجمع الست بالعربي، توليد `android:localeConfig`

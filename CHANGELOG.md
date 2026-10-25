@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `rtl` reported `already RTL-clean — nothing to migrate` when the path did not
+  exist or was not a decoded project. It now fails loudly instead. That answer was
+  the worst possible one for a wrong path.
+- `minSdkVersion` is now read from `apktool.yml` when the manifest has no
+  `<uses-sdk>` element. Real APKs decode that way — a 99-locale game reported
+  `minSdk 23` only in `apktool.yml` — so the API-17 guard was silently doing
+  nothing on exactly the apps that needed it.
+
+### Added
+- `examples/demo-project` plus `examples/ar.tsv`: a small decoded project that
+  contains the three traps (a layout with both `paddingLeft` and `paddingStart`, a
+  `<style>` carrying direction in an `<item>` value, and a
+  `?listPreferredItemPaddingLeft` reference), so the tool can be tried without an
+  APK or the Android SDK.
+- `docs/bidi.md` and `docs/troubleshooting.md`.
+- `.editorconfig`, `CITATION.cff`.
+
 ### Planned
 - plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker

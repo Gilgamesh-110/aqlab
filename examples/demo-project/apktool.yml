@@ -1,0 +1,10 @@
+!!brut.androlib.meta.MetaInfo
+apkFileName: demo.apk
+isFrameworkApk: false
+sdkInfo:
+  minSdkVersion: 21
+  targetSdkVersion: 34
+usesFramework:
+  ids:
+  - 1
+version: 2.12.1

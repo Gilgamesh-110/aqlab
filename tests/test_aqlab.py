@@ -306,6 +306,22 @@ def test_min_sdk_guard(tmp):
         check("yamlless manifest still guarded", True)
 
 
+def test_bad_path_guard(tmp):
+    """A wrong path must fail loudly — never report 'already RTL-clean'."""
+    try:
+        A.patch_rtl(Path(tmp) / "does-not-exist")
+        check("missing dir fails loudly", False, "should have raised")
+    except SystemExit:
+        check("missing dir fails loudly", True)
+    noproj = Path(tmp) / "notdecoded"
+    noproj.mkdir()
+    try:
+        A.patch_rtl(noproj)
+        check("dir without res/ fails loudly", False, "should have raised")
+    except SystemExit:
+        check("dir without res/ fails loudly", True)
+
+
 def test_scan(proj):
     rc = A.cmd_scan(argparse.Namespace(target=str(proj), json=True, quiet=True))
     check("scan rc", rc == 0)
@@ -322,6 +338,7 @@ def main():
         test_lint(proj)
         test_dedupe_and_styles(tmp)
         test_min_sdk_guard(tmp)
+        test_bad_path_guard(tmp)
         test_scan(proj)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0

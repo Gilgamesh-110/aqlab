@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use aqlab in work you cite, please cite it as below."
+title: "aqlab: Arabic and RTL localization for Android APKs"
+abstract: >-
+  A command-line tool that makes an Android application Arabic and RTL-correct.
+  It sets android:supportsRtl, migrates legacy left/right layout attributes to the
+  logical start/end equivalents, scaffolds and applies a translation table, and
+  lints Arabic string resources for Unicode bidirectional hazards, escaping bugs and
+  format-specifier drift. Single file, Python standard library only.
+type: software
+authors:
+  - alias: Gilgamesh-110
+    name: "گلگامش (Gilgamesh)"
+    website: "https://github.com/Gilgamesh-110"
+version: 0.1.0
+date-released: 2026-10-26
+license: MIT
+repository-code: "https://github.com/Gilgamesh-110/aqlab"
+url: "https://github.com/Gilgamesh-110/aqlab"
+keywords:
+  - android
+  - arabic
+  - right-to-left
+  - localization
+  - internationalization
+  - bidirectional-text
+  - apk
+  - apktool

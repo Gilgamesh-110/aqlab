@@ -10,6 +10,8 @@
 [![dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](#requirements)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Changelog](https://img.shields.io/badge/changelog-keep_a_changelog-orange.svg)](CHANGELOG.md)
+[![release](https://img.shields.io/github/v/release/Gilgamesh-110/aqlab?sort=date&color=blue)](https://github.com/Gilgamesh-110/aqlab/releases/latest)
+[![platform](https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20macos-lightgrey.svg)](#requirements)
 
 [العربية](README.ar.md) · **English**
 
@@ -29,8 +31,41 @@ migration, Unicode bidi hazards, and Android resource escaping.
   <img src="assets/demo.svg" alt="terminal session: scan, rtl, lint" width="100%">
 </p>
 
+## Try it in 5 seconds
+
+No APK and no Android SDK needed for this part — there is a small decoded project
+in the repo that deliberately contains the traps:
+
+```sh
+git clone https://github.com/Gilgamesh-110/aqlab && cd aqlab
+python aqlab.py rtl   examples/demo-project
+python aqlab.py apply examples/demo-project --tsv examples/ar.tsv
+python aqlab.py lint  examples/demo-project
+```
+
+```
+[PATCH] AndroidManifest.xml: android:supportsRtl="true"
+[PATCH] res/layout/activity_main.xml: 11 attribute(s)
+[PATCH] res/layout/list_item.xml: 6 attribute(s)
+[PATCH] res/values/styles.xml: 2 attribute(s)
+[DONE] 4 file(s) updated
+[DONE] 12 translation(s) -> examples/demo-project/res/values-ar/strings.xml
+[FINDING] lint res/values-ar: 12/12 translated (100.0%)
+[OK] 0 error(s), 0 warning(s)
+```
+
+It contains a layout that declares `paddingLeft` **and** `paddingStart`, a
+`<style>` that carries the direction in an `<item>` value, and a
+`?listPreferredItemPaddingLeft` theme reference — the three things that break a
+naive migration.
+
+<p align="center">
+  <img src="assets/before-after.svg" alt="the same screen before and after, with the attributes that changed" width="100%">
+</p>
+
 ## Contents
 
+- [Try it in 5 seconds](#try-it-in-5-seconds)
 - [Why](#why)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -41,6 +76,7 @@ migration, Unicode bidi hazards, and Android resource escaping.
 - [Tested on](#tested-on)
 - [FAQ](#faq)
 - [Requirements](#requirements)
+- [Docs](#docs)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -234,13 +270,22 @@ strings are still broken.
 Python 3.9+, `apktool`, and Android SDK build-tools (`aapt2`, `zipalign`,
 `apksigner`). Nothing else — no pip dependencies, no `lxml`, no `androguard`.
 
+## Docs
+
+| | |
+|---|---|
+| [docs/bidi.md](docs/bidi.md) | the long version of bidi: the algorithm, which marks to use and when, and what the linter can and cannot see |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | `duplicate attribute`, `minSdkVersion`, missing tools, a rebuilt app that crashes, translations that do not show up |
+| [CHANGELOG.md](CHANGELOG.md) | release history |
+| [SECURITY.md](SECURITY.md) | threat model, signing-key hygiene, untrusted APK input |
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The test suite is plain asserts and runs
 anywhere:
 
 ```sh
-python tests/test_aqlab.py       # 60 checks, no framework, no network, no apktool
+python tests/test_aqlab.py       # 64 checks, no framework, no network, no apktool
 ```
 
 Most wanted: plural validation for the six Arabic forms, `android:localeConfig`

@@ -435,6 +435,14 @@ def patch_rtl(proj, dry=False, quiet=False, allow_old_sdk=False):
     res = Path(proj) / "res"
     manifest = Path(proj) / "AndroidManifest.xml"
 
+    # A wrong path must fail loudly. Reporting "already RTL-clean" for a directory
+    # that does not exist is the worst possible answer.
+    if not Path(proj).is_dir():
+        raise Fail(f"{proj}: not a directory — pass the project dir from `aqlab decode`")
+    if not res.is_dir():
+        raise Fail(f"{proj}: no res/ directory — is this a decoded project? "
+                   f"Run `aqlab decode <apk> -o <dir>` first.")
+
     # 0. start/end resources only exist from API 17 — fail loudly rather than
     #    letting the user discover it from an aapt2 error 60 seconds later.
     msk = manifest_min_sdk(proj)
