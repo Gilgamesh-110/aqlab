@@ -73,6 +73,7 @@ naive migration.
 - [What it fixes](#what-it-fixes)
 - [The part nobody else does: bidi linting](#the-part-nobody-else-does-bidi-linting)
 - [What it does *not* do](#what-it-does-not-do)
+- [How this relates to other tools](#how-this-relates-to-other-tools)
 - [Tested on](#tested-on)
 - [FAQ](#faq)
 - [Requirements](#requirements)
@@ -226,6 +227,24 @@ Exit code is non-zero on errors, so it drops straight into CI.
   break every other locale in a multi-language app. `supportsRtl` with
   `start`/`end` is the correct mechanism, and it is what Google's own
   documentation specifies.
+
+## How this relates to other tools
+
+| tool | what it does | where it stops |
+|---|---|---|
+| **Android Lint** (`RtlHardcoded`, `RtlEnabled`) | flags hardcoded `left`/`right` in a **source** project, and Android Studio can auto-fix them | needs source and a working build. It cannot see an APK. Says nothing about bidi in translated strings or `%1$s` drift. |
+| **Android Studio translation editor** | tracks which strings are translated | manages text, not direction. Does not touch a layout. |
+| **`android:layoutDirection="rtl"`** | forces a subtree right-to-left | the common wrong fix — it breaks every other locale in a multi-language app. |
+| **Machine translation** (DeepL, Google, an LLM) | translates the strings | will happily turn `%1$s` into `%s`, and cannot see a layout at all. |
+| **Crowdin / Lokalise / Weblate** | orchestrates translators and review | upstream of the layout work; no RTL mechanics, no bidi linting. |
+| **`apktool` alone** | gives you a decoded project | does none of the migration, and hands you the duplicate-attribute trap for free. |
+| **`aqlab`** | sets `supportsRtl`, migrates the attributes, scaffolds and applies the translation table, lints bidi and resource escaping | operates on a **decoded APK** — no source needed. Does not translate anything. |
+
+**When not to use this.** If you have the project source and a working build, use
+Android Lint's `RtlHardcoded` and `RtlEnabled` checks — that is the right tool, it
+runs in your build, and it is maintained by the people who make the platform.
+`aqlab` exists for the other case: an APK and no source, or a source tree that no
+longer builds.
 
 ## Tested on
 
