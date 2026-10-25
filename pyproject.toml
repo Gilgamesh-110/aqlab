@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arabize"
+version = "0.1.0"
+description = "Make an Android app Arabic with correct RTL: layout direction, attribute migration and bidi linting in one command."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Gilgamesh-110" }]
+keywords = ["android", "arabic", "rtl", "i18n", "localization", "apk", "bidi", "right-to-left"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Arabic",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Localization",
+    "Topic :: Software Development :: Internationalization",
+]
+
+[project.urls]
+Homepage = "https://github.com/Gilgamesh-110/arabize"
+Issues = "https://github.com/Gilgamesh-110/arabize/issues"
+
+[project.scripts]
+arabize = "arabize:cli"
+
+[tool.setuptools]
+py-modules = ["arabize"]

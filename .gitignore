@@ -1,0 +1,28 @@
+# build / decode artifacts
+*-decoded/
+*.apk
+*.apks
+*.idsig
+*.keystore
+*.jks
+*.p12
+
+# translation working files
+*.tsv
+!tests/**/*.tsv
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
