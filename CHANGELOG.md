@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+- plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
+- `android:localeConfig` scaffolding for the Android 13+ per-app language picker
+- vector-drawable mirroring warnings
+
+## [0.1.1] — 2026-10-26
+
 ### Fixed
 - `rtl` reported `already RTL-clean — nothing to migrate` when the path did not
   exist or was not a decoded project. It now fails loudly instead. That answer was
@@ -23,11 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   APK or the Android SDK.
 - `docs/bidi.md` and `docs/troubleshooting.md`.
 - `.editorconfig`, `CITATION.cff`.
-
-### Planned
-- plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
-- `android:localeConfig` scaffolding for the Android 13+ per-app language picker
-- vector-drawable mirroring warnings
 
 ## [0.1.0] — 2026-10-26
 
@@ -69,5 +71,6 @@ First release.
 - A project with `minSdkVersion < 17` failed late, inside `aapt2`. It is now
   rejected up front, before anything is written.
 
-[Unreleased]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Gilgamesh-110/aqlab/releases/tag/v0.1.0

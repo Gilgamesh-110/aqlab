@@ -12,7 +12,7 @@ authors:
   - alias: Gilgamesh-110
     name: "گلگامش (Gilgamesh)"
     website: "https://github.com/Gilgamesh-110"
-version: 0.1.0
+version: 0.1.1
 date-released: 2026-10-26
 license: MIT
 repository-code: "https://github.com/Gilgamesh-110/aqlab"
