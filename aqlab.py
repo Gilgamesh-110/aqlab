@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-arabize — make any Android app Arabic, RTL-correct, in one command.
+aqlab — make any Android app Arabic, RTL-correct, in one command.
 
 Single-file, stdlib-only. Wraps apktool + aapt2/zipalign/apksigner; all the
 Arabic-specific logic (RTL attribute migration, BiDi linting, resource
 escaping) is implemented here.
 
-    arabize scan    <apk|dir>            read-only report, changes nothing
-    arabize decode  <apk>                unpack to a project dir
-    arabize rtl     <dir>                manifest supportsRtl + left/right -> start/end
-    arabize scaffold<dir>                build ar.tsv + res/values-ar/strings.xml
-    arabize apply   <dir> --tsv ar.tsv   import translated rows
-    arabize lint    <dir>                BiDi hazards, escaping bugs, coverage
-    arabize build   <dir>                apktool b -> zipalign -> apksigner
-    arabize all     <apk>                decode + rtl + apply + lint + build
+    aqlab scan    <apk|dir>            read-only report, changes nothing
+    aqlab decode  <apk>                unpack to a project dir
+    aqlab rtl     <dir>                manifest supportsRtl + left/right -> start/end
+    aqlab scaffold<dir>                build ar.tsv + res/values-ar/strings.xml
+    aqlab apply   <dir> --tsv ar.tsv   import translated rows
+    aqlab lint    <dir>                BiDi hazards, escaping bugs, coverage
+    aqlab build   <dir>                apktool b -> zipalign -> apksigner
+    aqlab all     <apk>                decode + rtl + apply + lint + build
 
 Exit code is non-zero when `lint` finds errors, so it drops straight into CI.
 """
@@ -236,7 +236,7 @@ def rewrite_styles(text):
 
 class Fail(SystemExit):
     def __init__(self, msg):
-        super().__init__(f"arabize: {msg}")
+        super().__init__(f"aqlab: {msg}")
 
 
 def run(cmd, quiet=False, check=True):
@@ -261,7 +261,7 @@ def _first_of(*cands):
 def sdk_build_tools():
     """Locate the newest Android build-tools dir (aapt2/zipalign/apksigner)."""
     roots = [
-        os.environ.get("ARABIZE_SDK"),
+        os.environ.get("AQLAB_SDK"),
         os.environ.get("ANDROID_HOME"),
         os.environ.get("ANDROID_SDK_ROOT"),
         Path.home() / "android-sdk",
@@ -284,9 +284,9 @@ _BT = None
 
 
 def tool(name):
-    """Resolve an SDK tool by name, honouring ARABIZE_<TOOL> overrides."""
+    """Resolve an SDK tool by name, honouring AQLAB_<TOOL> overrides."""
     global _BT
-    env = os.environ.get("ARABIZE_" + name.upper())
+    env = os.environ.get("AQLAB_" + name.upper())
     if env and Path(env).exists():
         return env
     found = shutil.which(name)
@@ -298,13 +298,13 @@ def tool(name):
         for cand in (_BT / name, _BT / (name + ".exe"), _BT / (name + ".bat")):
             if cand.exists():
                 return str(cand)
-    raise Fail(f"cannot find `{name}` — set ARABIZE_{name.upper()} or ANDROID_HOME")
+    raise Fail(f"cannot find `{name}` — set AQLAB_{name.upper()} or ANDROID_HOME")
 
 
 def apktool_cmd():
-    env = os.environ.get("ARABIZE_APKTOOL")
+    env = os.environ.get("AQLAB_APKTOOL")
     jar = _first_of(env, Path.home() / "apktool.jar", "apktool.jar")
-    java = _first_of(os.environ.get("ARABIZE_JAVA"), "java")
+    java = _first_of(os.environ.get("AQLAB_JAVA"), "java")
     if jar and jar.endswith(".jar"):
         if not java:
             raise Fail("apktool.jar found but no `java` on PATH")
@@ -312,7 +312,7 @@ def apktool_cmd():
     exe = shutil.which("apktool")
     if exe:
         return [exe]
-    raise Fail("cannot find apktool — set ARABIZE_APKTOOL=/path/to/apktool.jar")
+    raise Fail("cannot find apktool — set AQLAB_APKTOOL=/path/to/apktool.jar")
 
 
 # --------------------------------------------------------------------------
@@ -408,11 +408,34 @@ def cmd_decode(args):
     return 0
 
 
-def patch_rtl(proj, dry=False, quiet=False):
+def manifest_min_sdk(proj):
+    """minSdkVersion from a decoded manifest, or None when absent/unresolvable."""
+    man = Path(proj) / "AndroidManifest.xml"
+    if not man.exists():
+        return None
+    txt = man.read_bytes().decode("utf-8", "replace")
+    m = re.search(r'minSdkVersion\s*=\s*"([^"]+)"', txt)
+    if not m or m.group(1).startswith("@"):
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def patch_rtl(proj, dry=False, quiet=False, allow_old_sdk=False):
     """Manifest supportsRtl + left/right -> start/end across res/**."""
     changes = []
     res = Path(proj) / "res"
     manifest = Path(proj) / "AndroidManifest.xml"
+
+    # 0. start/end resources only exist from API 17 — fail loudly rather than
+    #    letting the user discover it from an aapt2 error 60 seconds later.
+    msk = manifest_min_sdk(proj)
+    if msk is not None and msk < 17 and not allow_old_sdk:
+        raise Fail(f"minSdkVersion={msk}: the start/end attributes need API 17. "
+                   f"Raise minSdk to 17+, or pass --force-min-sdk to migrate anyway "
+                   f"(the build will fail unless minSdk is raised too).")
 
     # 1. android:supportsRtl="true" on <application>
     if manifest.exists():
@@ -452,7 +475,8 @@ def patch_rtl(proj, dry=False, quiet=False):
 
 
 def cmd_rtl(args):
-    changes = patch_rtl(args.proj, dry=args.dry_run, quiet=args.quiet)
+    changes = patch_rtl(args.proj, dry=args.dry_run, quiet=args.quiet,
+                        allow_old_sdk=getattr(args, "force_min_sdk", False))
     if not changes:
         print("[FINDING] already RTL-clean — nothing to migrate")
         return 0
@@ -485,7 +509,7 @@ def write_strings_xml(out_dir, pairs):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     lines = ['<?xml version="1.0" encoding="utf-8"?>',
-             f"<!-- generated by arabize {__version__} -->",
+             f"<!-- generated by aqlab {__version__} -->",
              "<resources>"]
     pl = {}
     for e, text in pairs:
@@ -506,7 +530,7 @@ def write_strings_xml(out_dir, pairs):
 
 def write_tsv(path, entries, tsv_map):
     """key, source, translation — column 1 must be preserved exactly."""
-    rows = ["# arabize translation table — fill the LAST column, keep column 1 EXACT",
+    rows = ["# aqlab translation table — fill the LAST column, keep column 1 EXACT",
             "# key\tsource\ttranslation"]
     for e in entries:
         src = e.text.replace("\t", " ").replace("\n", "\\n")
@@ -531,7 +555,7 @@ def cmd_scaffold(args):
     print(f"[DONE] scaffolded {len(entries)} entries -> {out_dir}")
     print(f"       translated: {len(have)}   pending: {len(entries) - len(have)}")
     print(f"       translate:  {out_dir / 'strings.tsv'}")
-    print(f"       then:       arabize apply {args.proj} --tsv {out_dir / 'strings.tsv'}")
+    print(f"       then:       aqlab apply {args.proj} --tsv {out_dir / 'strings.tsv'}")
     return 0
 
 
@@ -572,10 +596,10 @@ def scan_project(proj, args):
     ar = Path(proj) / "res" / "values-ar" / "strings.xml"
     print(f"[FINDING] project: {proj}")
     print(f"  locales        : {', '.join(l.split('-', 1)[-1] for l in loc) or 'default only'}")
-    print(f"  supportsRtl    : {'yes' if rtl_on else 'NO — run `arabize rtl`'}")
+    print(f"  supportsRtl    : {'yes' if rtl_on else 'NO — run `aqlab rtl`'}")
     print(f"  translatable   : {sum(1 for e in entries if e.translatable)}")
-    print(f"  legacy L/R     : {lefts} attribute(s) still left/right — run `arabize rtl`")
-    print(f"  arabic res     : {'yes ' + str(ar) if ar.exists() else 'none — run `arabize scaffold`'}")
+    print(f"  legacy L/R     : {lefts} attribute(s) still left/right — run `aqlab rtl`")
+    print(f"  arabic res     : {'yes ' + str(ar) if ar.exists() else 'none — run `aqlab scaffold`'}")
     if args.json:
         print(json.dumps({"locales": loc, "supportsRtl": rtl_on,
                           "translatable": sum(1 for e in entries if e.translatable),
@@ -641,7 +665,7 @@ def cmd_lint(args):
     issues, errors = [], 0
 
     if not ar_path.exists():
-        print(f"[FINDING] no res/values-{args.locale}/strings.xml — run `arabize scaffold`")
+        print(f"[FINDING] no res/values-{args.locale}/strings.xml — run `aqlab scaffold`")
         return 1
     tr = {e.key: e for e in read_entries(ar_path)}
 
@@ -722,7 +746,8 @@ def cmd_build(args):
 def cmd_all(args):
     proj = Path(args.apk).stem + "-decoded"
     cmd_decode(argparse.Namespace(apk=args.apk, out=proj, framework=args.framework, quiet=args.quiet))
-    cmd_rtl(argparse.Namespace(proj=proj, dry_run=False, quiet=args.quiet))
+    cmd_rtl(argparse.Namespace(proj=proj, dry_run=False, quiet=args.quiet,
+                               force_min_sdk=getattr(args, "force_min_sdk", False)))
     if args.tsv:
         cmd_apply(argparse.Namespace(proj=proj, tsv=args.tsv, locale=args.locale))
     rc = cmd_lint(argparse.Namespace(proj=proj, locale=args.locale, verbose=args.verbose))
@@ -738,11 +763,11 @@ def cmd_all(args):
 
 def build_parser():
     p = argparse.ArgumentParser(
-        prog="arabize",
+        prog="aqlab",
         description="Make an Android app Arabic with correct RTL — one command.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="docs: https://github.com/<you>/arabize")
-    p.add_argument("--version", action="version", version=f"arabize {__version__}")
+        epilog="docs: https://github.com/<you>/aqlab")
+    p.add_argument("--version", action="version", version=f"aqlab {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def common(sp):
@@ -764,6 +789,8 @@ def build_parser():
     s = sub.add_parser("rtl", help="enable RTL and migrate left/right -> start/end")
     s.add_argument("proj")
     s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--force-min-sdk", action="store_true",
+                   help="migrate even when minSdkVersion < 17 (the build will then fail)")
     common(s)
     s.set_defaults(func=cmd_rtl)
 
@@ -793,7 +820,7 @@ def build_parser():
     s.add_argument("proj")
     s.add_argument("-o", "--out")
     s.add_argument("--ks", help="keystore path")
-    s.add_argument("--ks-pass", default=os.environ.get("ARABIZE_KS_PASS", ""))
+    s.add_argument("--ks-pass", default=os.environ.get("AQLAB_KS_PASS", ""))
     s.add_argument("--ks-alias")
     common(s)
     s.set_defaults(func=cmd_build)
@@ -804,10 +831,11 @@ def build_parser():
     s.add_argument("--locale", default="ar")
     s.add_argument("-o", "--out")
     s.add_argument("--ks")
-    s.add_argument("--ks-pass", default=os.environ.get("ARABIZE_KS_PASS", ""))
+    s.add_argument("--ks-pass", default=os.environ.get("AQLAB_KS_PASS", ""))
     s.add_argument("--ks-alias")
     s.add_argument("-p", "--framework")
     s.add_argument("-v", "--verbose", action="store_true")
+    s.add_argument("--force-min-sdk", action="store_true")
     common(s)
     s.set_defaults(func=cmd_all)
     return p

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="500" viewBox="0 0 1160 500"
+     role="img" aria-label="Terminal session showing aqlab scan, rtl and lint">
+  <rect width="1160" height="500" rx="12" fill="#0d1117" stroke="#30363d" stroke-width="2"/>
+  <rect width="1160" height="40" rx="12" fill="#161b22"/>
+  <rect y="28" width="1160" height="12" fill="#161b22"/>
+  <circle cx="28" cy="20" r="6" fill="#ff5f57"/>
+  <circle cx="50" cy="20" r="6" fill="#febc2e"/>
+  <circle cx="72" cy="20" r="6" fill="#28c840"/>
+  <text x="580" y="25" text-anchor="middle" fill="#8b949e"
+        font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace"
+        font-size="13">aqlab — bash</text>
+
+  <g font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace"
+     font-size="14.5" fill="#c9d1d9">
+    <text x="28" y="92"><tspan fill="#3fb950">$</tspan> aqlab scan app.apk</text>
+    <text x="28" y="118"><tspan fill="#58a6ff">[FINDING]</tspan> apk: app.apk</text>
+    <text x="28" y="142">  package        : com.example.app</text>
+    <text x="28" y="166">  locales        : 87 -&gt; --_--, af, am, ar, as, az, be, bg, bn, bs, ca, cs, da, de</text>
+    <text x="28" y="190">  arabic present : yes</text>
+    <text x="28" y="214">  supportsRtl    : no (or not detectable in binary XML)</text>
+
+    <text x="28" y="254"><tspan fill="#3fb950">$</tspan> aqlab rtl work</text>
+    <text x="28" y="278">  <tspan fill="#d29922">[PATCH]</tspan> AndroidManifest.xml: android:supportsRtl="true"</text>
+    <text x="28" y="302">  <tspan fill="#d29922">[PATCH]</tspan> res/layout/main.xml: 6 attribute(s)</text>
+    <text x="28" y="326">  <tspan fill="#d29922">[PATCH]</tspan> res/values/styles.xml: 3 attribute(s)</text>
+    <text x="28" y="350"><tspan fill="#3fb950">[DONE]</tspan> 29 file(s) updated</text>
+
+    <text x="28" y="390"><tspan fill="#3fb950">$</tspan> aqlab lint work</text>
+    <text x="28" y="414"><tspan fill="#58a6ff">[FINDING]</tspan> lint res/values-ar: 148/190 translated (77.9%)</text>
+    <text x="28" y="438">  <tspan fill="#f85149">[ERROR]</tspan> discount: bare `%` — must be `%%` or a format specifier</text>
+    <text x="28" y="462"><tspan fill="#f85149">[FAIL]</tspan> 1 error(s), 0 warning(s)</text>
+  </g>
+</svg>

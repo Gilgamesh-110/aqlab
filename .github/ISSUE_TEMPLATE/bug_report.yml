@@ -1,0 +1,78 @@
+name: Bug report
+description: Something is wrong — a wrong migration, a build that breaks, a bad lint verdict.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The fastest fix comes from the raw output, so please
+        paste what the tool actually printed rather than a summary of it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you get instead?
+      placeholder: "`aqlab rtl work` renamed X to Y, but it should have…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Full output
+      description: Paste the complete command output, including the error.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: aqlab version
+      description: Output of `aqlab --version`.
+      placeholder: "aqlab 0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: apktool
+    attributes:
+      label: apktool / build-tools versions
+      placeholder: "apktool 2.12.1, build-tools 36.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage fails?
+      options:
+        - scan
+        - decode
+        - rtl
+        - scaffold / apply
+        - lint
+        - build / sign
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: min-sdk
+    attributes:
+      label: minSdkVersion of the target app
+      description: From the decoded `AndroidManifest.xml`. The start/end attributes need API 17+.
+      placeholder: "21"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before posting
+      options:
+        - label: I installed from the latest commit, not an older copy.
+          required: true
+        - label: I ran `aqlab scan` first and I am including its output when relevant.
+          required: false

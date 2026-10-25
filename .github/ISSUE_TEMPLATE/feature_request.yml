@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a rule, a command, or a language.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: Describe the situation, not the solution. What are you stuck doing by hand?
+      placeholder: "Every time I localize an app I have to…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - rtl / attribute migration
+        - bidi linting
+        - translation workflow (TSV / values-ar)
+        - build / signing
+        - another RTL language (he / fa / ur)
+        - docs
+        - other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to open a pull request for this.
+          required: false

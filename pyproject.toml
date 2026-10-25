@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "arabize"
+name = "aqlab"
 version = "0.1.0"
 description = "Make an Android app Arabic with correct RTL: layout direction, attribute migration and bidi linting in one command."
 readme = "README.md"
@@ -24,11 +24,11 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Gilgamesh-110/arabize"
-Issues = "https://github.com/Gilgamesh-110/arabize/issues"
+Homepage = "https://github.com/Gilgamesh-110/aqlab"
+Issues = "https://github.com/Gilgamesh-110/aqlab/issues"
 
 [project.scripts]
-arabize = "arabize:cli"
+aqlab = "aqlab:cli"
 
 [tool.setuptools]
-py-modules = ["arabize"]
+py-modules = ["aqlab"]

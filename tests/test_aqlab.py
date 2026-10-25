@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""arabize self-check — plain asserts, no framework.
+"""aqlab self-check — plain asserts, no framework.
 
-    python tests/test_arabize.py
+    python tests/test_aqlab.py
 """
 import argparse
 import sys
@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import arabize as A  # noqa: E402
+import aqlab as A  # noqa: E402
 
 MANIFEST = """<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -255,6 +255,40 @@ def test_dedupe_and_styles(tmp):
     check("style patch idempotent", again == [], str(again))
 
 
+def test_min_sdk_guard(tmp):
+    """start/end resources need API 17 — refuse early instead of letting aapt2
+    fail 60 seconds into the build."""
+    old = Path(tmp) / "oldproj"
+    (old / "res" / "values").mkdir(parents=True)
+    (old / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <uses-sdk android:minSdkVersion="14" android:targetSdkVersion="28"/>\n'
+        '    <application android:label="x"/>\n'
+        '</manifest>\n', encoding="utf-8")
+    check("min sdk read", A.manifest_min_sdk(old) == 14)
+    try:
+        A.patch_rtl(old)
+        check("refuses minSdk<17", False, "should have raised")
+    except SystemExit:
+        check("refuses minSdk<17", True)
+    A.patch_rtl(old, allow_old_sdk=True)
+    check("force overrides the guard",
+          'supportsRtl="true"' in (old / "AndroidManifest.xml").read_text(encoding="utf-8"))
+
+    modern = Path(tmp) / "modernproj"
+    (modern / "res" / "values").mkdir(parents=True)
+    (modern / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <uses-sdk android:minSdkVersion="21"/>\n'
+        '    <application android:label="x"/>\n'
+        '</manifest>\n', encoding="utf-8")
+    A.patch_rtl(modern)
+    check("modern minSdk passes",
+          'supportsRtl="true"' in (modern / "AndroidManifest.xml").read_text(encoding="utf-8"))
+
+
 def test_scan(proj):
     rc = A.cmd_scan(argparse.Namespace(target=str(proj), json=True, quiet=True))
     check("scan rc", rc == 0)
@@ -270,6 +304,7 @@ def main():
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)
+        test_min_sdk_guard(tmp)
         test_scan(proj)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0
