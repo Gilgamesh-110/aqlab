@@ -40,6 +40,9 @@ jobs:
       - name: Tests
         run: python tests/test_aqlab.py
 
+      - name: README quickstart still matches the docs
+        run: python tests/test_readme.py
+
       - name: CLI smoke
         run: |
           python aqlab.py --version

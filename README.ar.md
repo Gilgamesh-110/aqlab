@@ -46,8 +46,15 @@ python aqlab.py lint  examples/demo-project
 [DONE] 4 file(s) updated
 [DONE] 12 translation(s) -> examples/demo-project/res/values-ar/strings.xml
 [FINDING] lint res/values-ar: 12/12 translated (100.0%)
-[OK] 0 error(s), 0 warning(s)
+  [ERROR] plurals/selected_count: missing Arabic quantities: few (3-10), many (11-99) — those counts fall back to `other`
+  [WARN] plurals/selected_count: no zero (0), two (2) form — those counts use `other`
+[FAIL] 1 error(s), 1 warning(s)
 ```
+
+هذا السطر الأخير هو سبب وجود الأداة. عربية المشروع التجريبي **مترجمة 100%
+وبعدها غلط** بكل عدد فوق 2 — تكتب `3 عنصر` والمفروض `3 عناصر`، و`11 عنصراً`
+فوق العشرة، و`لا عناصر` عند الصفر. ماكو نص ناقص، ولا خطأ بناء، ولا شي أي linter
+عادي يبلّغ عنه.
 
 فيه layout عنده `paddingLeft` **و** `paddingStart` سوا، و`<style>` يحمل الاتجاه
 داخل قيمة `<item>`، ومرجع `?listPreferredItemPaddingLeft` — الثلاثة اللي تكسر أي

@@ -1,0 +1,13 @@
+# key	source	translation
+app_name	Demo	تطبيقي
+action_settings	Settings	الإعدادات
+title_files	Files	الملفات
+downloading_files	Downloading %1$d of %2$d files	تنزيل %1$d من %2$d ملفات
+discount_banner	Save 50%% today	وفّر 50%% اليوم
+open_folder	Open folder: %s	فتح المجلد: %s
+copied_to_clipboard	Copied to clipboard	تم النسخ إلى الحافظة
+search_hint	Search	بحث
+last_synced	Last synced at %s	آخر مزامنة في %s
+delete_confirm	Delete %s? This cannot be undone.	حذف %s؟ لا يمكن التراجع.
+selected_count|one	%d item selected	تم تحديد %d عنصر
+selected_count|other	%d items selected	تم تحديد %d عناصر

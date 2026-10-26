@@ -10,6 +10,8 @@
 # translation working files
 *.tsv
 !tests/**/*.tsv
+# the README quickstart reads this one
+!examples/*.tsv
 
 # python
 __pycache__/

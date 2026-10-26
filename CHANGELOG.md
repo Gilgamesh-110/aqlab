@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scan` reports every locale folder, not only the ones holding a `strings.xml`.
 
 ### Fixed
+- `examples/ar.tsv` was in `.gitignore` (`*.tsv` covers the tool's working files)
+  and had never been committed, so the README's second quickstart command failed
+  on every fresh clone with `FileNotFoundError`. The file is now tracked, with a
+  targeted negation for it, and `tests/test_readme.py` runs the documented
+  commands in CI and diffs the result against the block printed below them.
 - `rtl` corrupted a self-closing `<application/>`. The `supportsRtl` insert
   stripped the trailing `>` and appended the attribute, leaving a stray `/` in
   front of it and a manifest that no longer parses — discovered only when the

@@ -55,8 +55,15 @@ python aqlab.py lint  examples/demo-project
 [DONE] 4 file(s) updated
 [DONE] 12 translation(s) -> examples/demo-project/res/values-ar/strings.xml
 [FINDING] lint res/values-ar: 12/12 translated (100.0%)
-[OK] 0 error(s), 0 warning(s)
+  [ERROR] plurals/selected_count: missing Arabic quantities: few (3-10), many (11-99) — those counts fall back to `other`
+  [WARN] plurals/selected_count: no zero (0), two (2) form — those counts use `other`
+[FAIL] 1 error(s), 1 warning(s)
 ```
+
+That last line is the reason this tool exists. The demo's Arabic is **100%
+translated and still wrong** at every count above 2 — it says `3 عنصر` where
+Arabic needs `3 عناصر`, `11 عنصراً` above ten and `لا عناصر` at zero. There is no
+missing string, no build error and nothing an ordinary linter reports.
 
 It contains a layout that declares `paddingLeft` **and** `paddingStart`, a
 `<style>` that carries the direction in an `<item>` value, and a
