@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other`) rather than source order, so a generated file reads like a hand-written
   one.
 
+### Packaging
+- **Published to PyPI**: `pip install aqlab`. The build is warning-free and the
+  wheel declares its license as an SPDX expression (`License-Expression: MIT`).
+- `publish.yml` uploads on release through PyPI Trusted Publishing, so no API
+  token is stored anywhere. It refuses to upload unless the release tag matches
+  `__version__`, and it installs the built wheel into a clean virtualenv and runs
+  the console script before uploading.
+
 ## [0.1.3] — 2026-10-26
 
 ### Added

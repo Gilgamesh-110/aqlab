@@ -5,6 +5,8 @@
 **Flip any Android app to Arabic — RTL-correct — in one command.**
 
 [![tests](https://github.com/Gilgamesh-110/aqlab/actions/workflows/ci.yml/badge.svg)](https://github.com/Gilgamesh-110/aqlab/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/aqlab.svg?color=blue)](https://pypi.org/project/aqlab/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/aqlab.svg)](https://pypi.org/project/aqlab/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](#requirements)
@@ -107,11 +109,18 @@ you look at is already correct.
 ## Install
 
 ```sh
+pip install aqlab        # or: pipx install aqlab
+```
+
+One file, standard library only, nothing else to install. Also available without a
+package manager:
+
+```sh
 pipx install git+https://github.com/Gilgamesh-110/aqlab      # or
 curl -O https://raw.githubusercontent.com/Gilgamesh-110/aqlab/main/aqlab.py
 ```
 
-One file, standard library only. It drives tools you already have:
+It drives tools you already have:
 
 | tool | how it is found |
 |---|---|

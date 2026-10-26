@@ -5,6 +5,8 @@
 **اقلب أي تطبيق أندرويد للعربي — باتجاه RTL صحيح — بأمر واحد.**
 
 [![tests](https://github.com/Gilgamesh-110/aqlab/actions/workflows/ci.yml/badge.svg)](https://github.com/Gilgamesh-110/aqlab/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/aqlab.svg?color=blue)](https://pypi.org/project/aqlab/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/aqlab.svg)](https://pypi.org/project/aqlab/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](#المتطلبات)
@@ -95,10 +97,16 @@ python aqlab.py lint  examples/demo-project
 ## التنصيب
 
 ```sh
+pip install aqlab        # أو: pipx install aqlab
+```
+
+ملف واحد، مكتبة بايثون القياسية فقط، ماكو شي ثاني تنصّبه. ومتوفرة بلا مدير حزم بعد:
+
+```sh
 pipx install git+https://github.com/Gilgamesh-110/aqlab
 ```
 
-ملف واحد، مكتبة بايثون القياسية فقط. يشتغل على أدوات عندك أصلاً:
+يشتغل على أدوات عندك أصلاً:
 
 | الأداة | كيف يلگاها |
 |---|---|
