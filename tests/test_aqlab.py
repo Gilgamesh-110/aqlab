@@ -5,6 +5,9 @@
     python tests/test_aqlab.py
 """
 import argparse
+import contextlib
+import io
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -172,7 +175,10 @@ def test_lint(proj):
     rc = A.cmd_lint(argparse.Namespace(proj=str(proj), locale="ar", verbose=True))
     check("lint fails on errors", rc == 1)
 
-    # a correct file must pass clean
+    # a correct file must pass clean — and "correct" for Arabic means all six
+    # categories. The previous fixture carried only `one`/`other`, i.e. English
+    # quantities with Arabic words, which is the exact defect the plural check
+    # was written to catch.
     ar.write_text("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">تطبيقي</string>
@@ -180,15 +186,20 @@ def test_lint(proj):
     <string name="progress">تنزيل %d ملفات</string>
     <string name="safe">جاهز</string>
     <plurals name="files">
+        <item quantity="zero">لا ملفات</item>
         <item quantity="one">%d ملف واحد</item>
-        <item quantity="other">%d ملفات</item>
+        <item quantity="two">ملفان</item>
+        <item quantity="few">%d ملفات</item>
+        <item quantity="many">%d ملفاً</item>
+        <item quantity="other">%d ملف</item>
     </plurals>
 </resources>
 """, encoding="utf-8")
     rc = A.cmd_lint(argparse.Namespace(proj=str(proj), locale="ar", verbose=True))
     check("lint passes on a clean file", rc == 0, "expected no errors")
 
-    # Arabic drops the count in the `one` plural form — warn, never an error
+    # Arabic drops the count in `zero`/`one`/`two` ("ملف واحد", "ملفان") — that is
+    # correct, not a finding
     ar.write_text("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">تطبيقي</string>
@@ -196,8 +207,12 @@ def test_lint(proj):
     <string name="progress">تنزيل %d ملفات</string>
     <string name="safe">جاهز</string>
     <plurals name="files">
+        <item quantity="zero">لا ملفات</item>
         <item quantity="one">ملف واحد</item>
-        <item quantity="other">%d ملفات</item>
+        <item quantity="two">ملفان</item>
+        <item quantity="few">%d ملفات</item>
+        <item quantity="many">%d ملفاً</item>
+        <item quantity="other">%d ملف</item>
     </plurals>
 </resources>
 """, encoding="utf-8")
@@ -357,6 +372,62 @@ def test_decode_sources_flag():
     check("--with-sources keeps smali", "-s" not in seen[1])
 
 
+def test_plural_structure(tmp):
+    """An Arabic <plurals> that mirrors the English quantities must be reported.
+
+    English can only offer `one`/`other`. Arabic needs `few` (3-10) and `many`
+    (11-99) as well, or most counts read wrong — and nothing in the build says so
+    (verified: aapt2 compiles and links a translation whose plurals lacks even
+    `other`). This is the finding the tool exists for.
+    """
+    root = Path(tmp) / "plurals"
+    (root / "res" / "values").mkdir(parents=True)
+    (root / "res" / "values-ar").mkdir(parents=True)
+    (root / "res" / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+        '  <string name="app_name">Demo</string>\n'
+        '  <plurals name="n_items">\n'
+        '    <item quantity="one">%d item</item>\n'
+        '    <item quantity="other">%d items</item>\n'
+        '  </plurals>\n</resources>\n', encoding="utf-8")
+    (root / "res" / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+        '  <string name="app_name">تجربة</string>\n'
+        '  <plurals name="n_items">\n'
+        '    <item quantity="one">عنصر واحد</item>\n'
+        '    <item quantity="other">%d عنصر</item>\n'
+        '  </plurals>\n</resources>\n', encoding="utf-8")
+
+    ns = argparse.Namespace(proj=str(root), locale="ar", verbose=False)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = A.cmd_lint(ns)
+    out = buf.getvalue()
+    check("lint errors on Arabic plurals that mirror English", rc == 1)
+    check("it names the categories English cannot supply",
+          "few (3-10)" in out and "many (11-99)" in out)
+    m = re.search(r"\((\d+\.\d)%\)", out)
+    check("coverage never exceeds 100%", bool(m) and float(m.group(1)) <= 100.0)
+
+    # the same three findings must not fire once the categories are complete
+    (root / "res" / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+        '  <string name="app_name">تجربة</string>\n'
+        '  <plurals name="n_items">\n'
+        '    <item quantity="zero">لا عناصر</item>\n'
+        '    <item quantity="one">عنصر واحد</item>\n'
+        '    <item quantity="two">عنصران</item>\n'
+        '    <item quantity="few">%d عناصر</item>\n'
+        '    <item quantity="many">%d عنصراً</item>\n'
+        '    <item quantity="other">%d عنصر</item>\n'
+        '  </plurals>\n</resources>\n', encoding="utf-8")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = A.cmd_lint(ns)
+    check("lint accepts the full six-category Arabic plurals", rc == 0)
+    check("no plural finding remains", "plurals/" not in buf.getvalue())
+
+
 def test_scan(proj):
     rc = A.cmd_scan(argparse.Namespace(target=str(proj), json=True, quiet=True))
     check("scan rc", rc == 0)
@@ -376,6 +447,7 @@ def main():
         test_bad_path_guard(tmp)
         test_migrate_prefilter()
         test_decode_sources_flag()
+        test_plural_structure(tmp)
         test_scan(proj)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0

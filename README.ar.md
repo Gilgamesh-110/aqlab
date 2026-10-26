@@ -143,7 +143,7 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `rtl <dir>` | يضبط `android:supportsRtl` ويحوّل `left/right` → `start/end` بكل `res/**`. `--dry-run` للمعاينة. |
 | `scaffold <dir>` | ينشئ `res/values-ar/` وجدول ترجمة `strings.tsv` |
 | `apply <dir> --tsv` | يستورد جدول مترجم إلى `values-ar/strings.xml` |
-| `lint <dir>` | مخاطر bidi، أخطاء التهريب، اختلاف الـformat specifiers، التغطية. كود خروج غير صفري عند الأخطاء. |
+| `lint <dir>` | مخاطر bidi، أخطاء التهريب، اختلاف الـformat specifiers، **بنية صيغ الجمع العربية**، التغطية. كود خروج غير صفري عند الأخطاء. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | السلسلة كاملة |
 
@@ -222,13 +222,57 @@ fix:      المجلد test\u200f.    U+200F (علامة من اليمين لل�
 | القيمة تبدأ بـ`@` أو `?` | error |
 | اختلاف وسوم markup (`<b>`، `<xliff:g>`) عن المصدر | error |
 | مقطع لاتيني/رقمي بنهاية النص قبل الترقيم (يبي U+200F) | error |
+| `<plurals>` عربية ناقصة `other` أو `few` أو `many` | error |
 | القيمة مطابقة للمصدر وفيها لاتيني | warn |
 | ما بيه حروف عربية بالقيمة العربية | warn |
 | فرق بالمسافات بالبداية أو النهاية | warn |
-| صيغة جمع تسقط العدد | warn — العربي يسقطه فعلاً بحالة `one`/`two` |
+| `few` / `many` / `other` بنفس النص بالضبط | warn |
+| `<plurals>` عربية ناقصة `zero` أو `two` | warn |
 | خلط عربي + لاتيني بنفس النص | info |
 
 كود الخروج غير صفري عند الأخطاء، فينزل مباشرة بالـCI.
+
+## الجزء الثاني اللي ما يسويه غيرنا: العربي عنده ست صيغ جمع مو ثنتين
+
+الإنكليزي عنده صيغتان (`one`، `other`). العربي عنده **ست**، والثنتان اللي
+يغطّون معظم الأعداد — `few` (3–10) و `many` (11–99) — هن بالضبط الثنتان اللي
+ما يكدر المصدر الإنكليزي يعطيك إياهن:
+
+```
+العدد  0      1       2        3-10      11-99     100، 101، …
+       zero   one     two      few       many      other
+       لا     عنصر     عنصران    %d عناصر   %d عنصراً   %d عنصر
+```
+
+فالنتيجة المعتادة: `<plurals>` عربية تنسخ الإنكليزية — فئتان، بكلمات عربية.
+**تنبني. تنصّب. وما شي بالبناء يكول ولا كلمة.** وبعدها كل عدد من 2 وطالع
+يسقط على `other`:
+
+```
+3   عنصر     ← المفروض  3 عناصر
+15  عنصر     ← المفروض  15 عنصراً
+```
+
+`aqlab lint` يقرا الـ`<plurals>` **كبنية** ويبلّغ:
+
+```
+[ERROR] plurals/n_items: missing Arabic quantities: few (3-10), many (11-99)
+        — those counts fall back to `other`
+[WARN]  plurals/n_items: no zero (0), two (2) form — those counts use `other`
+[WARN]  plurals/n_items: few, many, other carry identical text
+        — the plural forms are not actually pluralised
+```
+
+ثلاث نقاط مهمة عن سلوكه:
+
+* **سقوط العدد بحالة `zero`/`one`/`two` مو ملاحظة.** `عنصر واحد` و `عنصران`
+  عربي صحيح؛ الخطأ بس إذا اخترع placeholder مو موجود بالمصدر.
+* **`other` الناقصة مو فشل بناء.** متحقَّق بـ`aapt2` — يترجم ويربط لغة
+  `<plurals>` مالتها بلا `other`. وهذا **أسوأ مو أحسن**: الأعداد ما إلها قيمة
+  عربية ولا شي يحذّر. هذا الفحص هو الوحيد اللي راح يكول.
+* **يقرا كل ملفات مجلد اللغة، مو `strings.xml` بس.** الجمع عادةً بملف
+  `plurals.xml` منفصل — AOSP ومعظم تطبيقات Material يصدرونه هيك، ففحص على
+  ملف واحد راح يفوت بالضبط الإدخالات اللي اني انشأت منه.
 
 ## شنو **ما** يسوي
 

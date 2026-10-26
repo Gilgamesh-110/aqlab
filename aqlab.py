@@ -31,7 +31,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -340,6 +340,27 @@ RE_ATTR_QTY = re.compile(r'\bquantity\s*=\s*"([^"]+)"')
 RE_ATTR_TRANSLATABLE = re.compile(r'\btranslatable\s*=\s*"false"')
 RE_CDATA = re.compile(r"^\s*<!\[CDATA\[(.*?)\]\]>\s*$", re.DOTALL)
 
+# Arabic is one of the few languages that uses all six CLDR plural categories.
+# The two that cover the most counts — `few` (3-10) and `many` (11-99) — are
+# exactly the two an English source cannot supply, so an Arabic <plurals> copied
+# from English builds fine and reads wrong for almost every number.
+ARABIC_PLURAL_CATEGORIES = ("zero", "one", "two", "few", "many", "other")
+PLURAL_RANGE = {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "few": "3-10",
+    "many": "11-99",
+    "other": "100, 101, 102 …",
+}
+# `other` covers every count the named categories do not, and few/many carry the
+# majority of real counts, so those three are errors. Verified with aapt2 that a
+# translation lacking `other` still compiles and links — this is not a build
+# guard, it is the finding that no Arabic value exists for those counts.
+# zero and two are optional in practice.
+PLURAL_REQUIRED = ("other", "few", "many")
+PLURAL_OPTIONAL = ("zero", "two")
+
 
 class Entry:
     __slots__ = ("key", "kind", "attrs", "body", "translatable")
@@ -372,6 +393,22 @@ def read_entries(path):
             if q:
                 out.append(Entry(f"{nm.group(1)}|{q.group(1)}", "plural",
                                  it.group("attrs"), it.group("body"), True))
+    return out
+
+
+def read_locale_entries(res, folders):
+    """Every <string>/<plurals> entry across the given res folders.
+
+    Callers must read the whole folder rather than one file: plurals routinely
+    live in their own `plurals.xml` (AOSP and most Material apps ship them that
+    way), so `strings.xml` alone quietly omits the entries a plurals check needs.
+    """
+    out = []
+    for folder in folders:
+        d = Path(res) / folder
+        if d.is_dir():
+            for f in sorted(d.glob("*.xml")):
+                out.extend(read_entries(f))
     return out
 
 
@@ -689,17 +726,22 @@ def scan_apk(apk, args):
 
 def cmd_lint(args):
     proj = Path(args.proj)
-    default = find_default_strings(proj)
-    if not default:
+    res = proj / "res"
+    if not find_default_strings(proj):
         raise Fail("no values/strings.xml — decode the APK first")
-    src = {e.key: e for e in read_entries(default) if e.translatable}
-    ar_path = proj / "res" / f"values-{args.locale}" / "strings.xml"
+
+    # Read the whole values folder, not one file. Plurals routinely live in their
+    # own `plurals.xml` — AOSP and most Material apps ship them that way — so
+    # reading only strings.xml silently skipped exactly the entries the plural
+    # check exists to inspect. Region variants (values-ar-rSA) count as `ar` too.
+    src = {e.key: e for e in read_locale_entries(res, ["values"]) if e.translatable}
+    ar_dirs = sorted(d.name for d in res.glob(f"values-{args.locale}*") if d.is_dir())
     issues, errors = [], 0
 
-    if not ar_path.exists():
-        print(f"[FINDING] no res/values-{args.locale}/strings.xml — run `aqlab scaffold`")
+    if not ar_dirs:
+        print(f"[FINDING] no res/values-{args.locale}/ — run `aqlab scaffold`")
         return 1
-    tr = {e.key: e for e in read_entries(ar_path)}
+    tr = {e.key: e for e in read_locale_entries(res, ar_dirs)}
 
     def add(level, key, msg):
         nonlocal errors
@@ -722,10 +764,15 @@ def cmd_lint(args):
             add("error", key, "bare `%` — must be `%%` or a format specifier, aapt will reject it")
         d_fmt, a_fmt = _formats(e.text), _formats(a)
         if d_fmt != a_fmt:
-            # Arabic legitimately drops the count in the `one`/`two` plural forms,
-            # so a missing specifier in a plural is a warning; inventing one is never ok.
-            lvl = "error" if (e.kind == "string" or len(a_fmt) > len(d_fmt)) else "warn"
-            add(lvl, key, f"format specifiers differ: source {d_fmt or '-'} vs arabic {a_fmt or '-'}")
+            # The count is legitimately absent from Arabic `zero`/`one`/`two`
+            # ("لا عناصر", "عنصر واحد", "عنصران"), so a specifier the Arabic value
+            # does not need is not a finding. Inventing one never is.
+            no_count = (e.kind == "plural"
+                        and e.key.rpartition("|")[2] in ("zero", "one", "two")
+                        and len(a_fmt) < len(d_fmt))
+            if not no_count:
+                lvl = "error" if (e.kind == "string" or len(a_fmt) > len(d_fmt)) else "warn"
+                add(lvl, key, f"format specifiers differ: source {d_fmt or '-'} vs arabic {a_fmt or '-'}")
         if e.text.endswith(" ") != a.endswith(" "):
             add("warn", key, "leading/trailing space mismatch — concatenated strings will run together")
         if re.search(r"(?<!\\)'", a):
@@ -738,8 +785,66 @@ def cmd_lint(args):
             add("error", key, f"markup tags differ: source {_tags(e.text) or '-'} "
                               f"vs arabic {_tags(a) or '-'}")
 
-    cov = 100.0 * len(tr) / max(len(src), 1)
-    print(f"[FINDING] lint res/values-{args.locale}: {len(tr)}/{len(src)} translated ({cov:.1f}%)")
+    # Coverage is "how many of the source entries have an Arabic counterpart".
+    # It used to be len(tr)/len(src), which is not the same number: a correct
+    # Arabic <plurals> has six quantities where the English source has two, so
+    # the ratio could exceed 100% (233% on a seven-entry file).
+    covered = sum(1 for k in src if k in tr)
+    cov = 100.0 * covered / max(len(src), 1)
+
+    # --- Arabic plurals, checked as a structure and not as loose keys ---------
+    # `read_entries` flattens <plurals> into one key per quantity, which is right
+    # for format/escaping checks and completely blind to the thing that actually
+    # breaks Arabic: an English source can only offer `one` and `other`, so an
+    # Arabic file that mirrors it is missing the two categories that cover almost
+    # every count. Nothing else in the tool would ever notice.
+    def by_plural(entries):
+        out = {}
+        for e in entries:
+            if e.kind == "plural":
+                name, _, q = e.key.partition("|")
+                out.setdefault(name, {})[q] = e
+        return out
+
+    ar_pl = by_plural(tr.values())
+    for name in sorted(by_plural(src.values())):
+        got = ar_pl.get(name)
+        label = f"plurals/{name}"
+        if not got:
+            add("warn", label, "no Arabic <plurals> for this name — every count "
+                               "will fall back to the English form")
+            continue
+
+        hard = [q for q in PLURAL_REQUIRED if q not in got]
+        if hard:
+            # Not a build failure: aapt2 compiles and links a translation whose
+            # <plurals> lacks `other` (verified). It is worse than that — the
+            # build is silent and the counts simply have no Arabic value.
+            why = ("it covers every count the other categories do not (100, 101, …) "
+                   "and the build will not warn" if "other" in hard
+                   else "those counts fall back to `other`")
+            add("error", label, "missing Arabic "
+                f"{'quantity' if len(hard) == 1 else 'quantities'}: "
+                + ", ".join(f"{q} ({PLURAL_RANGE[q]})" for q in hard) + f" — {why}")
+
+        soft = [q for q in PLURAL_OPTIONAL if q not in got]
+        if soft:
+            add("warn", label, "no "
+                + ", ".join(f"{q} ({PLURAL_RANGE[q]})" for q in soft)
+                + " form — those counts use `other`")
+
+        # Distinct categories carrying identical text is the tell that nobody
+        # actually pluralised anything.
+        same = {}
+        for q in ("few", "many", "other"):
+            if q in got:
+                same.setdefault(got[q].text.strip(), []).append(q)
+        for qs in same.values():
+            if len(qs) > 1:
+                add("warn", label, f"{', '.join(qs)} carry identical text — "
+                                   "the plural forms are not actually pluralised")
+
+    print(f"[FINDING] lint res/values-{args.locale}: {covered}/{len(src)} translated ({cov:.1f}%)")
     for lvl, key, msg in issues:
         if lvl == "info" and not args.verbose:
             continue

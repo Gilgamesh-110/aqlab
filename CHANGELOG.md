@@ -4,6 +4,35 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-10-26
+
+### Added
+- `lint` reads `<plurals>` as a structure and checks the six Arabic categories
+  instead of treating each quantity as an unrelated key. Arabic needs `few`
+  (3-10) and `many` (11-99), which are exactly the two an English source cannot
+  provide, so the usual result is an Arabic `<plurals>` that mirrors the English
+  `one`/`other`, compiles, installs, and reads wrong for every count above 2.
+  Reported as errors: a missing `other`/`few`/`many`, naming the count range each
+  one covers. As warnings: a missing `zero`/`two`, and `few`/`many`/`other`
+  carrying identical text.
+- `lint` reads every `*.xml` in the locale folder rather than only
+  `strings.xml`. Plurals normally live in their own `plurals.xml` — AOSP and most
+  Material apps ship them that way — so a strings-only read missed exactly the
+  entries the new check exists to inspect. Region variants (`values-ar-rSA`)
+  count as the locale.
+
+### Fixed
+- Coverage could exceed 100%: it was `len(arabic)/len(source)`, and a correct
+  Arabic `<plurals>` has six quantities where the English source has two (233% on
+  a seven-entry file). It is now the share of source entries that have an Arabic
+  counterpart, which cannot exceed 100%.
+
+### Changed
+- A plural `zero`/`one`/`two` that omits the count placeholder is no longer
+  reported at all. `عنصر واحد` and `عنصران` are correct Arabic, so the old
+  warning was noise on every well-translated file. Inventing a placeholder the
+  source does not have is still an error.
+
 ## [Unreleased]
 
 ### Planned

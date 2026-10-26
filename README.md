@@ -156,7 +156,7 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `rtl <dir>` | set `android:supportsRtl` and migrate `left/right` → `start/end` across `res/**`. `--dry-run` to preview. |
 | `scaffold <dir>` | create `res/values-ar/` and a `strings.tsv` translation table |
 | `apply <dir> --tsv` | import a translated table into `values-ar/strings.xml` |
-| `lint <dir>` | bidi hazards, escaping bugs, format-specifier drift, coverage. Non-zero exit on errors. |
+| `lint <dir>` | bidi hazards, escaping bugs, format-specifier drift, Arabic plural structure, coverage. Non-zero exit on errors. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | the whole pipeline |
 
@@ -241,13 +241,58 @@ fix:      المجلد test\u200f.    U+200F RIGHT-TO-LEFT MARK pins it in place
 | value starts with `@` or `?` | error |
 | markup tags (`<b>`, `<xliff:g>`) differ from the source | error |
 | trailing Latin/digit run before punctuation (needs U+200F) | error |
+| an Arabic `<plurals>` missing `other`, `few` or `many` | error |
 | value identical to the source and contains Latin | warn |
 | no Arabic characters in the Arabic value | warn |
 | leading/trailing space mismatch | warn |
-| a plural form that drops the count | warn — Arabic legitimately omits it in `one`/`two` |
+| `few` / `many` / `other` carrying identical text | warn |
+| an Arabic `<plurals>` missing `zero` or `two` | warn |
 | mixed Arabic + Latin in one string | info |
 
 Exit code is non-zero on errors, so it drops straight into CI.
+
+## The other part nobody does: Arabic has six plurals, not two
+
+English has two plural forms (`one`, `other`). Arabic has **six**, and the two
+that cover almost every count — `few` (3–10) and `many` (11–99) — are exactly the
+two an English source cannot hand you:
+
+```
+count  0     1       2       3-10       11-99      100, 101, …
+       zero  one     two     few        many       other
+       لا    عنصر     عنصران   %d عناصر    %d عنصراً    %d عنصر
+```
+
+So the standard outcome is an Arabic `<plurals>` that mirrors the English one —
+two categories, both in Arabic words. It compiles. It links. **Nothing in the
+build says a word.** And then every count from 2 upward falls through to `other`:
+
+```
+3   عنصر     ← should be  3 عناصر
+15  عنصر     ← should be  15 عنصراً
+```
+
+`aqlab lint` reads `<plurals>` as a structure and reports it:
+
+```
+[ERROR] plurals/n_items: missing Arabic quantities: few (3-10), many (11-99)
+        — those counts fall back to `other`
+[WARN]  plurals/n_items: no zero (0), two (2) form — those counts use `other`
+[WARN]  plurals/n_items: few, many, other carry identical text
+        — the plural forms are not actually pluralised
+```
+
+Three things worth knowing about how this behaves:
+
+* **Dropping the count in `zero`/`one`/`two` is not a finding.** `عنصر واحد` and
+  `عنصران` are correct Arabic; only a *invented* placeholder is an error.
+* **`other` missing is not a build failure.** Verified with `aapt2` — it compiles
+  and links a locale whose `<plurals>` has no `other`. That is worse, not better:
+  the counts simply have no Arabic value and nothing warns. This check is the only
+  thing that will.
+* **It reads every file in the locale folder, not just `strings.xml`.** Plurals
+  normally live in their own `plurals.xml` — AOSP and most Material apps ship them
+  that way, so a strings-only check would miss exactly the entries it exists for.
 
 ## What it does *not* do
 
