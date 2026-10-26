@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="aqlab — Flip any Android app to Arabic, RTL-correct, in one command.">
+  <rect width="1280" height="640" fill="#0d1117"/>
+<!-- decorative flip motif (right side, may be cropped) -->
+  <rect x="1018" y="124" width="6" height="392" fill="#30363d"/>
+  <g fill="#8b949e">
+    <rect x="840" y="156" width="150" height="52"/>
+    <rect x="840" y="240" width="96" height="52"/>
+    <rect x="840" y="324" width="130" height="52"/>
+    <rect x="840" y="408" width="76" height="52"/>
+  </g>
+  <g fill="#58a6ff">
+    <rect x="1052" y="156" width="150" height="52"/>
+    <rect x="1106" y="240" width="96" height="52"/>
+    <rect x="1072" y="324" width="130" height="52"/>
+    <rect x="1126" y="408" width="76" height="52"/>
+  </g>
+
+  <!-- logo mark, 96px -->
+  <g transform="translate(80 96) scale(0.1875)">
+    <rect x="16" y="16" width="480" height="480" rx="72" fill="#0d1117" stroke="#30363d" stroke-width="8"/>
+    <rect x="250" y="80" width="12" height="352" fill="#30363d"/>
+    <g fill="#8b949e">
+      <rect x="72" y="112" width="132" height="44"/>
+      <rect x="72" y="188" width="84" height="44"/>
+      <rect x="72" y="264" width="116" height="44"/>
+      <rect x="72" y="340" width="68" height="44"/>
+    </g>
+    <g fill="#58a6ff">
+      <rect x="308" y="112" width="132" height="44"/>
+      <rect x="356" y="188" width="84" height="44"/>
+      <rect x="324" y="264" width="116" height="44"/>
+      <rect x="372" y="340" width="68" height="44"/>
+    </g>
+  </g>
+
+  <g font-family="Inter, 'SF Pro Display', system-ui, -apple-system, 'Segoe UI', sans-serif">
+    <text x="76" y="332" font-size="128" font-weight="700" letter-spacing="-4" fill="#f0f6fc">aqlab</text>
+    <text x="80" y="404" font-size="44" font-weight="500" fill="#8b949e">Flip any Android app</text>
+    <text x="80" y="460" font-size="44" font-weight="500" fill="#8b949e">to Arabic — RTL-correct —</text>
+    <text x="80" y="516" font-size="44" font-weight="500" fill="#8b949e">in one command.</text>
+  </g>
+</svg>

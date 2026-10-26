@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="aqlab">
+  <g>
+    <rect x="16" y="16" width="480" height="480" rx="72" fill="#0d1117" stroke="#30363d" stroke-width="8"/>
+    <rect x="250" y="80" width="12" height="352" fill="#30363d"/>
+    <g fill="#8b949e">
+      <rect x="72" y="112" width="132" height="44"/>
+      <rect x="72" y="188" width="84" height="44"/>
+      <rect x="72" y="264" width="116" height="44"/>
+      <rect x="72" y="340" width="68" height="44"/>
+    </g>
+    <g fill="#58a6ff">
+      <rect x="308" y="112" width="132" height="44"/>
+      <rect x="356" y="188" width="84" height="44"/>
+      <rect x="324" y="264" width="116" height="44"/>
+      <rect x="372" y="340" width="68" height="44"/>
+    </g>
+  </g>
+</svg>

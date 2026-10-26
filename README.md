@@ -28,6 +28,10 @@ punctuation lands on the wrong side of the line.
 migration, Unicode bidi hazards, and Android resource escaping.
 
 <p align="center">
+  <img src="assets/features.svg" alt="layout direction, property migration, bidi risk scan, resource escaping" width="100%">
+</p>
+
+<p align="center">
   <img src="assets/demo.svg" alt="terminal session: scan, rtl, lint" width="100%">
 </p>
 

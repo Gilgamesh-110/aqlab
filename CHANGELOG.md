@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Brand kit in `assets/`: `logo.svg`, `banner.svg`, `features.svg`,
+  `before-after.svg` and `og-card.svg` (plus rendered PNGs), all on the GitHub
+  dark palette so they sit flush with the README.
+
 ### Planned
 - plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker

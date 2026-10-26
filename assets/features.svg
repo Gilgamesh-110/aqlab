@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="Layout direction, property migration, bidi risk scan, resource escaping">
+  <rect width="1200" height="300" fill="#0d1117"/>
+
+  <g fill="none" stroke-width="3" stroke-linecap="square" stroke-linejoin="miter">
+    <!-- 1. layout direction -->
+    <g transform="translate(162 66)">
+      <rect x="6" y="10" width="60" height="52" stroke="#8b949e"/>
+      <g stroke="#58a6ff">
+        <line x1="34" y1="26" x2="58" y2="26"/>
+        <line x1="22" y1="36" x2="58" y2="36"/>
+        <line x1="40" y1="46" x2="58" y2="46"/>
+      </g>
+    </g>
+    <!-- 2. property migration -->
+    <g transform="translate(430 66)">
+      <rect x="6" y="18" width="20" height="36" stroke="#8b949e"/>
+      <line x1="6" y1="18" x2="6" y2="54" stroke="#8b949e" stroke-width="6"/>
+      <line x1="30" y1="36" x2="42" y2="36" stroke="#f0f6fc"/>
+      <polyline points="37,31 42,36 37,41" stroke="#f0f6fc"/>
+      <rect x="46" y="18" width="20" height="36" stroke="#58a6ff"/>
+      <line x1="66" y1="18" x2="66" y2="54" stroke="#58a6ff" stroke-width="6"/>
+    </g>
+    <!-- 3. bidi risks -->
+    <g transform="translate(698 66)">
+      <polygon points="36,8 68,62 4,62" stroke="#d29922"/>
+      <g stroke="#58a6ff">
+        <line x1="24" y1="46" x2="48" y2="46"/>
+        <polyline points="30,40 24,46 30,52"/>
+        <polyline points="42,40 48,46 42,52"/>
+      </g>
+    </g>
+    <!-- 4. resource escaping -->
+    <g transform="translate(966 66)">
+      <polyline points="26,22 10,36 26,50" stroke="#8b949e"/>
+      <polyline points="46,22 62,36 46,50" stroke="#8b949e"/>
+      <line x1="30" y1="16" x2="42" y2="56" stroke="#58a6ff"/>
+    </g>
+  </g>
+
+  <g font-family="Inter, 'SF Pro Display', system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="30" font-weight="600" fill="#f0f6fc" text-anchor="middle">
+    <text x="198" y="186">Layout</text>
+    <text x="198" y="222">direction</text>
+    <text x="466" y="186">Property</text>
+    <text x="466" y="222">migration</text>
+    <text x="734" y="186">Bidi risk</text>
+    <text x="734" y="222">scan</text>
+    <text x="1002" y="186">Resource</text>
+    <text x="1002" y="222">escaping</text>
+  </g>
+</svg>
