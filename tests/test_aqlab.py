@@ -123,26 +123,41 @@ def test_scaffold_apply(proj, tmp):
     check("scaffold rc", rc == 0)
     ar_dir = proj / "res" / "values-ar"
     check("values-ar created", (ar_dir / "strings.xml").exists())
-    check("tsv created", (ar_dir / "strings.tsv").exists())
-    tsv = (ar_dir / "strings.tsv").read_text(encoding="utf-8").splitlines()
+    tsv_path = proj / "values-ar.tsv"
+    check("tsv created", tsv_path.exists())
+    check("no build input left inside res/", not list(ar_dir.glob("*.tsv")),
+          "a .tsv under res/ makes `aapt2 compile --dir res` fail")
+    tsv = tsv_path.read_text(encoding="utf-8").splitlines()
     rows = [l for l in tsv if not l.startswith("#")]
-    check("tsv has one row per entry", len(rows) == 6, str(len(rows)))
+    # 4 plain strings + the `files` plural expanded to Arabic's six categories
+    check("tsv has one row per entry, plurals expanded", len(rows) == 10, str(len(rows)))
+    cats = [r.split("\t")[0] for r in rows if r.startswith("files|")]
+    check("the categories English cannot supply get a row",
+          cats == ["files|" + c for c in A.ARABIC_PLURAL_CATEGORIES], str(cats))
     check("translatable=false excluded", not any(r.startswith("skip\t") for r in rows))
 
-    # translate: 3-col table (key, source, translation)
+    # translate: 3-col table (key, source, translation), adding the Arabic-only forms
     ar_tsv = Path(tmp) / "ar.tsv"
     ar_tsv.write_text(
         "# key\tsource\ttranslation\n"
         "app_name\tMyApp\tتطبيقي\n"
         "welcome\tWelcome back, %1$s\tمرحباً بعودتك، %1$s\n"
         "progress\tDownloading %d files\tتنزيل %d ملفات\n"
-        "files|one\t%d file\tملف واحد\n",
+        "files|one\t%d file\tملف واحد\n"
+        "files|few\t\t%d ملفات\n"
+        "files|many\t\t%d ملفاً\n"
+        "files|other\t%d files\t%d ملف\n",
         encoding="utf-8")
     rc = A.cmd_apply(argparse.Namespace(proj=str(proj), tsv=str(ar_tsv), locale="ar"))
     check("apply rc", rc == 0)
     out = (ar_dir / "strings.xml").read_text(encoding="utf-8")
     check("arabic written", "تطبيقي" in out and "مرحباً بعودتك، %1$s" in out)
     check("plural regrouped", "<plurals name=\"files\">" in out and "ملف واحد" in out)
+    check("quantities the source never had are written back",
+          'quantity="few"' in out and 'quantity="many"' in out)
+    check("quantities come out in CLDR order",
+          out.index('quantity="few"') < out.index('quantity="many"')
+          < out.index('quantity="other"'))
     check("untranslated omitted", "safe" not in out)
     check("format kept", "%d" in out)
 
@@ -428,6 +443,88 @@ def test_plural_structure(tmp):
     check("no plural finding remains", "plurals/" not in buf.getvalue())
 
 
+def test_plural_file_roundtrip(tmp):
+    """Plurals kept in their own values/plurals.xml must survive the whole loop.
+
+    AOSP and most Material apps keep them in a separate file. A tool that reads
+    only strings.xml never shows those entries to a translator, never writes an
+    Arabic version back, and puts everything it does write into strings.xml —
+    which is a duplicate-resource error the moment the app also ships
+    values-ar/plurals.xml.
+    """
+    root = Path(tmp) / "plfile"
+    (root / "res" / "values").mkdir(parents=True)
+    (root / "res" / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+        '  <string name="app_name">Demo</string>\n</resources>\n', encoding="utf-8")
+    (root / "res" / "values" / "plurals.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+        '  <plurals name="n_items">\n'
+        '    <item quantity="one">%d item</item>\n'
+        '    <item quantity="other">%d items</item>\n'
+        '  </plurals>\n</resources>\n', encoding="utf-8")
+
+    A.cmd_scaffold(argparse.Namespace(proj=str(root), locale="ar", tsv=None,
+                                      force=False, quiet=True))
+    tsv = root / "values-ar.tsv"
+    text = tsv.read_text(encoding="utf-8")
+    check("scaffold reaches into plurals.xml", "n_items|few" in text and "n_items|many" in text)
+
+    tsv.write_text(
+        "# key\tsource\ttranslation\n"
+        "n_items|zero\t\tلا عناصر\n"
+        "n_items|one\t%d item\tعنصر واحد\n"
+        "n_items|two\t\tعنصران\n"
+        "n_items|few\t\t%d عناصر\n"
+        "n_items|many\t\t%d عنصراً\n"
+        "n_items|other\t%d items\t%d عنصر\n"
+        "app_name\tDemo\tتجربة\n", encoding="utf-8")
+    rc = A.cmd_apply(argparse.Namespace(proj=str(root), tsv=str(tsv), locale="ar"))
+    check("apply rc", rc == 0)
+
+    ar_dir = root / "res" / "values-ar"
+    pl_file = ar_dir / "plurals.xml"
+    check("arabic plural written back to its own file", pl_file.exists())
+    pl = pl_file.read_text(encoding="utf-8")
+    check("all six categories written",
+          all(f'quantity="{q}"' in pl for q in A.ARABIC_PLURAL_CATEGORIES), pl)
+    check("the source file's split is preserved",
+          "<plurals" not in (ar_dir / "strings.xml").read_text(encoding="utf-8"))
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar", verbose=False))
+    check("lint is clean on the result", rc == 0, buf.getvalue()[-300:])
+
+
+def test_rtl_self_closing_application(tmp):
+    """A self-closing <application/> must survive the supportsRtl insert.
+
+    The insert used to strip the trailing '>' and append the attribute, which on
+    `<application .../>` left a stray '/' before it — a manifest that no longer
+    parses, discovered only when the build fails.
+    """
+    import xml.etree.ElementTree as ET
+    root = Path(tmp) / "selfclose"
+    (root / "res" / "values").mkdir(parents=True)
+    (root / "res" / "values" / "strings.xml").write_text(
+        '<resources><string name="app_name">D</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.t"><application android:label="@string/app_name"/></manifest>\n',
+        encoding="utf-8")
+
+    A.patch_rtl(root)
+    out = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
+    check("supportsRtl landed in the manifest", 'supportsRtl="true"' in out)
+    try:
+        ET.fromstring(out)
+        check("self-closing <application/> stays well-formed XML", True)
+    except ET.ParseError as e:
+        check("self-closing <application/> stays well-formed XML", False, f"{e}: {out}")
+
+
 def test_scan(proj):
     rc = A.cmd_scan(argparse.Namespace(target=str(proj), json=True, quiet=True))
     check("scan rc", rc == 0)
@@ -448,6 +545,8 @@ def main():
         test_migrate_prefilter()
         test_decode_sources_flag()
         test_plural_structure(tmp)
+        test_plural_file_roundtrip(tmp)
+        test_rtl_self_closing_application(tmp)
         test_scan(proj)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0

@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Planned
+- plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
+- `android:localeConfig` scaffolding for the Android 13+ per-app language picker
+- vector-drawable mirroring warnings
+
+## [0.1.4] — 2026-10-26
+
+### Added
+- `scaffold` reads every `res/values/*.xml`, not just `strings.xml`, and the
+  translation table carries a row for each of Arabic's six plural categories even
+  where the source has none. `apply` accepts those extra rows and writes each
+  entry back into the file its source came from, so an app that keeps
+  `values/plurals.xml` gets `values-ar/plurals.xml`. Without this there was
+  nowhere for a translator to put `few`/`many`, and every entry funnelled into
+  `strings.xml` — a duplicate-resource error for exactly the apps that ship a
+  separate plurals file. Verified with a real `aapt2 compile` + `link`: the built
+  APK carries two categories for the default locale and six for `ar`.
+- `scan` reports every locale folder, not only the ones holding a `strings.xml`.
+
+### Fixed
+- `rtl` corrupted a self-closing `<application/>`. The `supportsRtl` insert
+  stripped the trailing `>` and appended the attribute, leaving a stray `/` in
+  front of it and a manifest that no longer parses — discovered only when the
+  build fails, with the error pointing at the manifest rather than at the tool.
+- The translation table was written to `res/values-<locale>/strings.tsv`. A `.tsv`
+  is not a resource and `aapt2 compile --dir res` rejects it with
+  `invalid file path`. It now lives at `<project>/values-<locale>.tsv`. apktool
+  happens to skip the file, which is the only reason this went unnoticed.
+
+### Changed
+- Plural `<item>`s are written in canonical CLDR order (`zero one two few many
+  other`) rather than source order, so a generated file reads like a hand-written
+  one.
+
 ## [0.1.3] — 2026-10-26
 
 ### Added
@@ -32,13 +68,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported at all. `عنصر واحد` and `عنصران` are correct Arabic, so the old
   warning was noise on every well-translated file. Inventing a placeholder the
   source does not have is still an error.
-
-## [Unreleased]
-
-### Planned
-- plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
-- `android:localeConfig` scaffolding for the Android 13+ per-app language picker
-- vector-drawable mirroring warnings
 
 ## [0.1.2] — 2026-10-26
 
@@ -126,6 +155,9 @@ First release.
 - A project with `minSdkVersion < 17` failed late, inside `aapt2`. It is now
   rejected up front, before anything is written.
 
-[Unreleased]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Gilgamesh-110/aqlab/releases/tag/v0.1.0

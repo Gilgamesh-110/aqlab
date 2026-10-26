@@ -121,9 +121,9 @@ aqlab scan app.apk          # شنو حالة هذا التطبيق؟
 aqlab decode app.apk -o work        # فك التطبيق
 aqlab rtl    work --dry-run         # عاين الترحيل قبل ما تطبّقه
 aqlab rtl    work                   # طبّقه
-aqlab scaffold work                 # -> work/res/values-ar/strings.tsv
+aqlab scaffold work                 # -> work/values-ar.tsv  (الجدول خارج res/)
 #     ... ترجم العمود الأخير (DeepL، LLM، أو مترجم بشري) ...
-aqlab apply  work --tsv work/res/values-ar/strings.tsv
+aqlab apply  work --tsv work/values-ar.tsv
 aqlab lint   work                   # يرجع كود خطأ عند وجود أخطاء حقيقية
 aqlab build  work --ks release.keystore --ks-alias release
 ```
@@ -141,8 +141,8 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `scan <apk\|dir>` | تقرير للقراءة فقط: اللغات، `supportsRtl`، عدد `left/right` الباقية، نسبة التغطية. `--json` للأدوات. |
 | `decode <apk>` | يفك الـAPK لمشروع قابل للتعديل. يتخطّى `smali/` افتراضياً — التفاصيل تحت. |
 | `rtl <dir>` | يضبط `android:supportsRtl` ويحوّل `left/right` → `start/end` بكل `res/**`. `--dry-run` للمعاينة. |
-| `scaffold <dir>` | ينشئ `res/values-ar/` وجدول ترجمة `strings.tsv` |
-| `apply <dir> --tsv` | يستورد جدول مترجم إلى `values-ar/strings.xml` |
+| `scaffold <dir>` | ينشئ `res/values-ar/` وجدول ترجمة `values-ar.tsv`. يقرا **كل** `values/*.xml` مو `strings.xml` بس. |
+| `apply <dir> --tsv` | يستورد الجدول المترجم إلى `values-ar/`، وكل إدخال لملفه الأصلي |
 | `lint <dir>` | مخاطر bidi، أخطاء التهريب، اختلاف الـformat specifiers، **بنية صيغ الجمع العربية**، التغطية. كود خروج غير صفري عند الأخطاء. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | السلسلة كاملة |
@@ -274,6 +274,29 @@ fix:      المجلد test\u200f.    U+200F (علامة من اليمين لل�
   `plurals.xml` منفصل — AOSP ومعظم تطبيقات Material يصدرونه هيك، ففحص على
   ملف واحد راح يفوت بالضبط الإدخالات اللي اني انشأت منه.
 
+### شلون تكمّل الفئات الناقصة
+
+جدول الترجمة أصلاً يحمل صف لكل الفئات **الستة**، حتى اللي ما إلها سطر بالمصدر
+الإنكليزي — وإلا ما بقى وين تكتبهن، و`apply` ما يلكى شي يرجّعه:
+
+```
+aqlab scaffold work        # work/values-ar.tsv
+    n_items|zero      ← فاضي: الفئات العربية إلها صف خاص
+    n_items|one       %d item
+    n_items|two
+    n_items|few
+    n_items|many
+    n_items|other     %d items
+
+aqlab apply  work --tsv work/values-ar.tsv
+```
+
+كل إدخال يرجع **لملفه الأصلي**، فتطبيق يحفظ جمعه بـ`values/plurals.xml` يطلعله
+`values-ar/plurals.xml`. ما ينكبّ كلشي بـ`strings.xml`، لأن `<plurals>` بنفس
+الاسم بملفين بلغة وحدة = خطأ duplicate resource. والجدول نفسه بمكان
+`work/values-ar.tsv` مو جوّه `res/` — ملف `.tsv` داخل `res/` يكسّر
+`aapt2 compile --dir res`.
+
 ## شنو **ما** يسوي
 
 * **ما يترجم شي.** لا ترجمة آلية ولا AI. العمود الأخير بالـTSV شغلك — الأداة
@@ -356,7 +379,7 @@ Python 3.9+، `apktool`، و Android SDK build-tools (`aapt2`, `zipalign`,
 بأي مكان:
 
 ```sh
-python tests/test_aqlab.py       # 68 فحص، بلا framework، بلا شبكة، بلا apktool
+python tests/test_aqlab.py       # 85 فحص، بلا framework، بلا شبكة، بلا apktool
 ```
 
 الأكثر طلباً: التحقق من صيغ الجمع الست بالعربي، توليد `android:localeConfig`

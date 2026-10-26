@@ -31,7 +31,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -363,11 +363,16 @@ PLURAL_OPTIONAL = ("zero", "two")
 
 
 class Entry:
-    __slots__ = ("key", "kind", "attrs", "body", "translatable")
+    __slots__ = ("key", "kind", "attrs", "body", "translatable", "src")
 
-    def __init__(self, key, kind, attrs, body, translatable):
+    def __init__(self, key, kind, attrs, body, translatable, src=None):
         self.key, self.kind, self.attrs = key, kind, attrs
         self.body, self.translatable = body, translatable
+        # Basename of the file it came from, so a translation can be written back
+        # to the same file the source keeps it in rather than all of them landing
+        # in strings.xml — two files declaring the same <plurals name> in one
+        # locale is a duplicate-resource error.
+        self.src = src
 
     @property
     def text(self):
@@ -378,12 +383,13 @@ class Entry:
 def read_entries(path):
     """Extract <string> and <plurals><item> entries with their source text."""
     raw = Path(path).read_text(encoding="utf-8", errors="replace")
+    name = Path(path).name
     out = []
     for m in RE_STRING.finditer(raw):
         nm = RE_ATTR_NAME.search(m.group("attrs"))
         if nm:
             out.append(Entry(nm.group(1), "string", m.group("attrs"), m.group("body"),
-                             not RE_ATTR_TRANSLATABLE.search(m.group("attrs"))))
+                             not RE_ATTR_TRANSLATABLE.search(m.group("attrs")), name))
     for blk in RE_PLURALS.finditer(raw):
         nm = RE_ATTR_NAME.search(blk.group("attrs"))
         if not nm:
@@ -392,7 +398,50 @@ def read_entries(path):
             q = RE_ATTR_QTY.search(it.group("attrs"))
             if q:
                 out.append(Entry(f"{nm.group(1)}|{q.group(1)}", "plural",
-                                 it.group("attrs"), it.group("body"), True))
+                                 it.group("attrs"), it.group("body"), True, name))
+    return out
+
+
+def split_by_file(entries):
+    """Group entries by the source file they came from, preserving order."""
+    groups = {}
+    for e in entries:
+        groups.setdefault(e.src or "strings.xml", []).append(e)
+    return groups
+
+
+def plural_rows_for(entries, locale):
+    """Entries plus a TSV row for every plural category the target locale needs
+    but the source cannot supply.
+
+    Arabic uses six categories and an English source has two, so rows for `few`
+    (3-10), `many` (11-99) and the rest have to exist somewhere or the translator
+    has nowhere to put them and `apply` has nothing to read back. Each plural is
+    emitted as all six categories in CLDR order, carrying the source text where
+    the source has it and left blank where it cannot — which is also the shape the
+    finished file will take.
+    """
+    if locale != "ar":
+        return entries
+    by_name = {}
+    for e in entries:
+        if e.kind == "plural":
+            by_name.setdefault(e.key.split("|", 1)[0], {})[e.key.rpartition("|")[2]] = e
+    if not by_name:
+        return entries
+    out, emitted = [], set()
+    for e in entries:
+        if e.kind != "plural":
+            out.append(e)
+            continue
+        name = e.key.split("|", 1)[0]
+        if name in emitted:
+            continue
+        emitted.add(name)
+        got = by_name[name]
+        for cat in ARABIC_PLURAL_CATEGORIES:
+            out.append(got.get(cat)
+                       or Entry(f"{name}|{cat}", "plural", e.attrs, "", True, e.src))
     return out
 
 
@@ -514,6 +563,11 @@ def patch_rtl(proj, dry=False, quiet=False, allow_old_sdk=False):
             tag = m.group(0)
             if "supportsRtl" in tag:
                 new = re.sub(r'(supportsRtl\s*=\s*)"[^"]*"', r'\1"true"', tag)
+            elif tag.endswith("/>"):
+                # <application .../> has to keep its slash at the end — inserting
+                # before it is the difference between a valid manifest and one
+                # that fails to parse.
+                new = tag[:-2].rstrip() + '\n        android:supportsRtl="true"/>'
             else:
                 new = tag[:-1].rstrip() + '\n        android:supportsRtl="true">'
             if new != tag:
@@ -573,8 +627,8 @@ def translations_from_tsv(path):
     return out
 
 
-def write_strings_xml(out_dir, pairs):
-    """Emit res/values-<locale>/strings.xml from (entry, translated_text) pairs."""
+def write_strings_xml(out_dir, pairs, fname="strings.xml"):
+    """Emit res/values-<locale>/<fname> from (entry, translated_text) pairs."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     lines = ['<?xml version="1.0" encoding="utf-8"?>',
@@ -588,13 +642,16 @@ def write_strings_xml(out_dir, pairs):
         else:
             name, qty = e.key.split("|", 1)
             pl.setdefault(name, []).append((qty, esc))
+    order = {q: i for i, q in enumerate(ARABIC_PLURAL_CATEGORIES)}
     for name, items in pl.items():
+        # canonical CLDR order, so a generated file reads like a hand-written one
+        items.sort(key=lambda t: order.get(t[0], len(order)))
         lines.append(f'    <plurals name="{name}">')
         for qty, esc in items:
             lines.append(f'        <item quantity="{qty}">{esc}</item>')
         lines.append("    </plurals>")
     lines.append("</resources>")
-    (out_dir / "strings.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out_dir / fname).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write_tsv(path, entries, tsv_map):
@@ -608,41 +665,87 @@ def write_tsv(path, entries, tsv_map):
 
 
 def cmd_scaffold(args):
-    src = find_default_strings(args.proj)
-    if not src:
+    res = Path(args.proj) / "res"
+    if not find_default_strings(args.proj):
         raise Fail("no values/strings.xml found — decode the APK first")
-    entries = [e for e in read_entries(src) if e.translatable]
-    out_dir = Path(args.proj) / "res" / f"values-{args.locale}"
-    target = out_dir / "strings.xml"
-    if target.exists() and not args.force:
-        raise Fail(f"{target} already exists — refusing to overwrite existing "
-                   f"translations. Re-run with --force, or use `apply` to update it.")
+
+    # Every values file, not just strings.xml. An app that keeps its plurals in
+    # values/plurals.xml — AOSP and most Material apps do — would otherwise never
+    # hand those entries to a translator, and the Arabic build falls back to the
+    # English plural forms with nothing reporting it.
+    entries = [e for e in read_locale_entries(res, ["values"]) if e.translatable]
+    groups = split_by_file(entries)
+    out_dir = res / f"values-{args.locale}"
+
+    # Each source file keeps its shape in the target locale, so no resource name
+    # ends up declared twice in one locale (aapt2: duplicate resource).
+    clobber = [f for f in sorted(groups) if (out_dir / f).exists()]
+    if clobber and not args.force:
+        raise Fail(f"{', '.join(str(out_dir / f) for f in clobber)} already exists — "
+                   f"refusing to overwrite existing translations. Re-run with "
+                   f"--force, or use `apply` to update it.")
+
     merged = translations_from_tsv(args.tsv) if args.tsv and Path(args.tsv).exists() else {}
     have = [(e, merged[e.key]) for e in entries if merged.get(e.key)]
-    write_strings_xml(out_dir, have)
-    write_tsv(out_dir / "strings.tsv", entries, merged)
-    print(f"[DONE] scaffolded {len(entries)} entries -> {out_dir}")
-    print(f"       translated: {len(have)}   pending: {len(entries) - len(have)}")
-    print(f"       translate:  {out_dir / 'strings.tsv'}")
-    print(f"       then:       aqlab apply {args.proj} --tsv {out_dir / 'strings.tsv'}")
+    by_file = {}
+    for e, t in have:
+        by_file.setdefault(e.src or "strings.xml", []).append((e, t))
+    write_strings_xml(out_dir, by_file.get("strings.xml", []))  # always the entry point
+    for fname, group in by_file.items():
+        if fname != "strings.xml":
+            write_strings_xml(out_dir, group, fname)
+    rows = plural_rows_for(entries, args.locale)
+    # The table stays OUT of res/: it is not a resource, and anything that
+    # compiles the tree directly (aapt2 compile --dir res) fails on it with
+    # "invalid file path". apktool happens to skip it, which is why this never
+    # showed up until now.
+    tsv = Path(args.proj) / f"values-{args.locale}.tsv"
+    write_tsv(tsv, rows, merged)
+    print(f"[DONE] scaffolded {len(entries)} entries from {len(groups)} file(s) -> {out_dir}")
+    print(f"       translated: {len(have)}   pending: {len(rows) - len(have)}")
+    print(f"       translate:  {tsv}")
+    print(f"       then:       aqlab apply {args.proj} --tsv {tsv}")
     return 0
 
 
 def cmd_apply(args):
-    src = find_default_strings(args.proj)
-    if not src:
+    res = Path(args.proj) / "res"
+    if not find_default_strings(args.proj):
         raise Fail("no values/strings.xml found — decode the APK first")
     merged = translations_from_tsv(args.tsv)
     if not merged:
         raise Fail(f"no usable rows in {args.tsv}")
-    all_entries = [e for e in read_entries(src) if e.translatable]
+    all_entries = [e for e in read_locale_entries(res, ["values"]) if e.translatable]
     pairs = [(e, merged[e.key]) for e in all_entries if merged.get(e.key)]
+
+    # Arabic has six plural categories and the source may have two, so a
+    # translator must be able to supply quantities the source never had. Accept
+    # any `name|quantity` whose plural name exists in the source and whose
+    # quantity is a real CLDR category for the target locale.
+    home = {}
+    for e in all_entries:
+        if e.kind == "plural":
+            home.setdefault(e.key.split("|", 1)[0], e)
+    known = {e.key for e in all_entries}
+    for key, text in merged.items():
+        if key in known or not text.strip():
+            continue
+        name, sep, qty = key.partition("|")
+        anchor = home.get(name) if sep else None
+        if anchor and qty in ARABIC_PLURAL_CATEGORIES:
+            pairs.append((Entry(key, "plural", anchor.attrs, "", True, anchor.src), text))
+
     if not pairs:
-        raise Fail("TSV keys match nothing in the default strings.xml")
-    out_dir = Path(args.proj) / "res" / f"values-{args.locale}"
-    write_strings_xml(out_dir, pairs)
-    write_tsv(out_dir / "strings.tsv", all_entries, merged)
-    print(f"[DONE] {len(pairs)} translation(s) -> {out_dir}/strings.xml")
+        raise Fail("TSV keys match nothing in the default values/ resources")
+    out_dir = res / f"values-{args.locale}"
+    by_file = {}
+    for e, t in pairs:
+        by_file.setdefault(e.src or "strings.xml", []).append((e, t))
+    for fname, group in by_file.items():
+        write_strings_xml(out_dir, group, fname)
+    write_tsv(Path(args.proj) / f"values-{args.locale}.tsv",
+              plural_rows_for(all_entries, args.locale), merged)
+    print(f"[DONE] {len(pairs)} translation(s) -> {out_dir}/{' + '.join(sorted(by_file))}")
     return 0
 
 
@@ -654,25 +757,25 @@ def cmd_scan(args):
 
 
 def scan_project(proj, args):
-    default = find_default_strings(proj)
-    if not default:
+    if not find_default_strings(proj):
         raise Fail("no values/strings.xml — is this a decoded project?")
-    entries = read_entries(default)
-    loc = sorted({p.parent.name for p in (Path(proj) / "res").glob("values-*/strings.xml")})
+    res = Path(proj) / "res"
+    entries = read_locale_entries(res, ["values"])
+    loc = sorted({p.parent.name for p in res.glob("values-*/*.xml")})
     manifest = (Path(proj) / "AndroidManifest.xml").read_text(encoding="utf-8", errors="replace")
     rtl_on = bool(re.search(r'supportsRtl\s*=\s*"true"', manifest))
     lefts = count_legacy_attrs(proj)
-    ar = Path(proj) / "res" / "values-ar" / "strings.xml"
+    ar_dirs = sorted(p.name for p in res.glob("values-ar*") if p.is_dir())
     print(f"[FINDING] project: {proj}")
     print(f"  locales        : {', '.join(l.split('-', 1)[-1] for l in loc) or 'default only'}")
     print(f"  supportsRtl    : {'yes' if rtl_on else 'NO — run `aqlab rtl`'}")
     print(f"  translatable   : {sum(1 for e in entries if e.translatable)}")
     print(f"  legacy L/R     : {lefts} attribute(s) still left/right — run `aqlab rtl`")
-    print(f"  arabic res     : {'yes ' + str(ar) if ar.exists() else 'none — run `aqlab scaffold`'}")
+    print(f"  arabic res     : {'yes (' + ', '.join(ar_dirs) + ')' if ar_dirs else 'none — run `aqlab scaffold`'}")
     if args.json:
         print(json.dumps({"locales": loc, "supportsRtl": rtl_on,
                           "translatable": sum(1 for e in entries if e.translatable),
-                          "legacyLTR": lefts, "arabic": ar.exists()}, ensure_ascii=False))
+                          "legacyLTR": lefts, "arabic": bool(ar_dirs)}, ensure_ascii=False))
     return 0
 
 

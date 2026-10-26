@@ -134,9 +134,9 @@ aqlab scan app.apk          # what is the state of this app?
 aqlab decode app.apk -o work        # unpack
 aqlab rtl    work --dry-run         # preview the migration
 aqlab rtl    work                   # apply it
-aqlab scaffold work                 # -> work/res/values-ar/strings.tsv
+aqlab scaffold work                 # -> work/values-ar.tsv  (table stays out of res/)
 #     ... translate the last column (DeepL, an LLM, or a human) ...
-aqlab apply  work --tsv work/res/values-ar/strings.tsv
+aqlab apply  work --tsv work/values-ar.tsv
 aqlab lint   work                   # exits non-zero on real errors
 aqlab build  work --ks release.keystore --ks-alias release
 ```
@@ -154,8 +154,8 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `scan <apk\|dir>` | read-only report: locales, `supportsRtl`, remaining `left/right`, coverage. `--json` for tooling. |
 | `decode <apk>` | unpack an APK into an editable project. Skips `smali/` by default — see below. |
 | `rtl <dir>` | set `android:supportsRtl` and migrate `left/right` → `start/end` across `res/**`. `--dry-run` to preview. |
-| `scaffold <dir>` | create `res/values-ar/` and a `strings.tsv` translation table |
-| `apply <dir> --tsv` | import a translated table into `values-ar/strings.xml` |
+| `scaffold <dir>` | create `res/values-ar/` and a `values-ar.tsv` translation table. Every `values/*.xml` is read, not just `strings.xml`. |
+| `apply <dir> --tsv` | import a translated table back into `values-ar/`, each entry into the file its source came from |
 | `lint <dir>` | bidi hazards, escaping bugs, format-specifier drift, Arabic plural structure, coverage. Non-zero exit on errors. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | the whole pipeline |
@@ -294,6 +294,30 @@ Three things worth knowing about how this behaves:
   normally live in their own `plurals.xml` — AOSP and most Material apps ship them
   that way, so a strings-only check would miss exactly the entries it exists for.
 
+### Supplying the missing forms
+
+The translation table already carries a row for **all six categories**, including
+the ones an English source has no line for — otherwise there is nowhere to write
+them, and `apply` would have nothing to read back:
+
+```
+aqlab scaffold work        # work/values-ar.tsv
+    n_items|zero      ← blank: Arabic-only categories get a row of their own
+    n_items|one       %d item
+    n_items|two
+    n_items|few
+    n_items|many
+    n_items|other     %d items
+
+aqlab apply  work --tsv work/values-ar.tsv
+```
+
+Each entry goes back into the file its source came from, so an app that keeps
+`values/plurals.xml` gets `values-ar/plurals.xml`. Nothing is funnelled into
+`strings.xml`, because a `<plurals>` name declared in two files of one locale is
+a duplicate-resource error. The table itself lives at `work/values-ar.tsv`, not
+inside `res/` — a `.tsv` under `res/` makes `aapt2 compile --dir res` fail.
+
 ## What it does *not* do
 
 * **It does not translate anything.** No machine translation, no AI. The last
@@ -382,7 +406,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). The test suite is plain asserts and runs
 anywhere:
 
 ```sh
-python tests/test_aqlab.py       # 68 checks, no framework, no network, no apktool
+python tests/test_aqlab.py       # 85 checks, no framework, no network, no apktool
 ```
 
 Most wanted: plural validation for the six Arabic forms, `android:localeConfig`
