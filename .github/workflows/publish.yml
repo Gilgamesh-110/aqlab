@@ -1,0 +1,59 @@
+name: publish
+
+# Publishes to PyPI using Trusted Publishing (OIDC) — no API token is stored
+# anywhere. PyPI verifies the workflow's identity and hands back a short-lived
+# upload token.
+#
+# One-time setup, in the PyPI web UI (Manage > Publishing) for the `aqlab` project:
+#   Owner:            Gilgamesh-110
+#   Repository:       aqlab
+#   Workflow name:    publish.yml
+#   Environment:      pypi
+# Until that exists this job fails, which is the intended behaviour.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    name: build and upload
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: The tag and __version__ must agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' aqlab.py)
+          echo "tag=$tag  package=$pkg"
+          if [ -n "$tag" ] && [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $tag does not match aqlab.__version__ $pkg"
+            exit 1
+          fi
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Check the wheel actually installs and runs
+        run: |
+          python -m venv /tmp/v
+          /tmp/v/bin/pip install --quiet dist/*.whl
+          /tmp/v/bin/aqlab --version
+          /tmp/v/bin/aqlab scan examples/demo-project > /dev/null
+
+      - name: Upload
+        uses: pypa/gh-action-pypi-publish@release/v1
