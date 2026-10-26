@@ -322,6 +322,21 @@ def test_bad_path_guard(tmp):
         check("dir without res/ fails loudly", True)
 
 
+def test_migrate_prefilter():
+    """The cheap pre-filter that skips unrelated tags must stay sound.
+
+    It is derived from the rename tables, but this locks the invariant in place
+    so a future hardcoded regex cannot silently start skipping real renames.
+    """
+    covered = (set(A.ATTR_RENAME) | A.GRAVITY_ATTRS | A.TEXT_ALIGN_ATTRS
+               | set(A.THEME_VALUE_MAP))
+    missed = sorted(n for n in covered if not A.RE_MAY_MIGRATE.search(n))
+    check("pre-filter recognises every renameable name", not missed)
+    plain = '<LinearLayout android:layout_width="match_parent" android:text="hi" />'
+    check("pre-filter leaves an unrelated tag alone",
+          A.rewrite_xml_attrs(plain) == (plain, 0))
+
+
 def test_scan(proj):
     rc = A.cmd_scan(argparse.Namespace(target=str(proj), json=True, quiet=True))
     check("scan rc", rc == 0)
@@ -339,6 +354,7 @@ def main():
         test_dedupe_and_styles(tmp)
         test_min_sdk_guard(tmp)
         test_bad_path_guard(tmp)
+        test_migrate_prefilter()
         test_scan(proj)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0

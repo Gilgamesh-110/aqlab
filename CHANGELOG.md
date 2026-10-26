@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `before-after.svg` and `og-card.svg` (plus rendered PNGs), all on the GitHub
   dark palette so they sit flush with the README.
 
+### Performance
+- `rtl` no longer runs the rename tables over every attribute of every element.
+  A tag is skipped unless one of the names the tables know about appears in it,
+  so the common `layout_width` / `text` / `id` tags cost one substring search
+  instead of an attribute scan plus a `migrate_attr` call each. The pre-filter
+  is derived from the tables, so a new rename is covered automatically.
+  Measured on a real 8,447-file decoded tree (125 layouts, 210 values files):
+  **6.62s → 4.31s** best-of-5, and pure-Python function calls **692k → 288k**.
+  Output verified byte-for-byte identical to the previous implementation.
+
 ### Planned
 - plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker

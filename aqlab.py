@@ -123,6 +123,14 @@ RE_ELEMENT = re.compile(r"<([A-Za-z_][\w.:-]*)((?:[^<>\"']|\"[^\"]*\"|'[^']*')*?
                         re.DOTALL)
 RE_ATTR = re.compile(r'([A-Za-z_][\w.:-]*)\s*=\s*"([^"]*)"')
 
+# Cheap pre-filter: a tag can only be migrated if one of the names the tables
+# above know about actually appears in it. Almost every tag in a real tree
+# (``layout_width``, ``text``, ``id`` …) matches nothing, so this skips both the
+# attribute scan and a ``migrate_attr`` call per attribute. Derived from the
+# tables, so a new rename is covered automatically and it cannot drift.
+RE_MAY_MIGRATE = re.compile("|".join(map(re.escape, sorted(
+    set(ATTR_RENAME) | GRAVITY_ATTRS | TEXT_ALIGN_ATTRS | set(THEME_VALUE_MAP)))))
+
 
 def migrate_attr(name, value):
     """Return (new_name, new_value) for an RTL migration, or None if untouched."""
@@ -151,12 +159,15 @@ def rewrite_xml_attrs(text):
     total = [0]
 
     def do_tag(m):
-        head, attrs, tail = m.group(1), m.group(2), m.group(3)
+        attrs = m.group(2)
+        if not RE_MAY_MIGRATE.search(attrs):
+            return m.group(0)
+        head, tail = m.group(1), m.group(3)
         matches = list(RE_ATTR.finditer(attrs))
         if not matches:
             return m.group(0)
-        planned = [(a, migrate_attr(a.group(1), a.group(2))) for a in matches]
-        reserved = {a.group(1) for a, mig in planned if mig is None}
+        planned = [(a, migrate_attr(a[1], a[2])) for a in matches]
+        reserved = {a[1] for a, mig in planned if mig is None}
         edits = []
         for a, mig in planned:
             if mig is None:
