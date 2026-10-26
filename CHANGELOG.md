@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker
 - vector-drawable mirroring warnings
 
+## [0.1.5] — 2026-10-27
+
+### Packaging
+- Releases now publish themselves. `publish.yml` uploads on a published release
+  through PyPI Trusted Publishing, so **no API token is stored anywhere** — PyPI
+  verifies the workflow's identity instead of trusting a secret.
+- The job refuses to upload unless the release tag matches `__version__`, and it
+  installs the built wheel into a clean virtualenv and runs the console script
+  before uploading. A package that installs but does not run is worse than no
+  package.
+
+### Changed
+- `pip install aqlab` is the first install line in both READMEs, with the git and
+  curl routes kept for anyone who does not want a package manager.
+
 ## [0.1.4] — 2026-10-26
 
 ### Added
@@ -46,12 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one.
 
 ### Packaging
-- **Published to PyPI**: `pip install aqlab`. The build is warning-free and the
-  wheel declares its license as an SPDX expression (`License-Expression: MIT`).
-- `publish.yml` uploads on release through PyPI Trusted Publishing, so no API
-  token is stored anywhere. It refuses to upload unless the release tag matches
-  `__version__`, and it installs the built wheel into a clean virtualenv and runs
-  the console script before uploading.
+- First release on PyPI. The wheel declares its license as an SPDX expression
+  (`License-Expression: MIT`) and the build is warning-free.
 
 ## [0.1.3] — 2026-10-26
 
@@ -168,7 +179,8 @@ First release.
 - A project with `minSdkVersion < 17` failed late, inside `aapt2`. It is now
   rejected up front, before anything is written.
 
-[Unreleased]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Gilgamesh-110/aqlab/compare/v0.1.1...v0.1.2
