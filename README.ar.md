@@ -139,13 +139,36 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | الأمر | شيسوي |
 |---|---|
 | `scan <apk\|dir>` | تقرير للقراءة فقط: اللغات، `supportsRtl`، عدد `left/right` الباقية، نسبة التغطية. `--json` للأدوات. |
-| `decode <apk>` | يفك الـAPK لمشروع قابل للتعديل |
+| `decode <apk>` | يفك الـAPK لمشروع قابل للتعديل. يتخطّى `smali/` افتراضياً — التفاصيل تحت. |
 | `rtl <dir>` | يضبط `android:supportsRtl` ويحوّل `left/right` → `start/end` بكل `res/**`. `--dry-run` للمعاينة. |
 | `scaffold <dir>` | ينشئ `res/values-ar/` وجدول ترجمة `strings.tsv` |
 | `apply <dir> --tsv` | يستورد جدول مترجم إلى `values-ar/strings.xml` |
 | `lint <dir>` | مخاطر bidi، أخطاء التهريب، اختلاف الـformat specifiers، التغطية. كود خروج غير صفري عند الأخطاء. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | السلسلة كاملة |
+
+### السرعة، وليش `decode` يتخطّى `smali/`
+
+تفكيك البايت كود يأخذ معظم وقت الفكّ، والأداة **ما تلمس الكود أبداً** — فنتخطّاه.
+`apktool` يحفظ الـAPK الأصلي بـ`apktool.yml` ويرجّع ملفات `classes*.dex` الأصلية
+عند البناء **بايت ببايت**؛ الدورة الكاملة تحت متحقَّقة بـ`sha256sum` على كل dex،
+والـAPK الناتج يعدّي `apksigner verify` و `zipalign -c`.
+
+مقيس على تطبيق حقيقي 17MB — شجرة 8,447 ملف، 125 layout، 210 ملف `values/`، 5 dex:
+
+| الخطوة | مع `smali/` | الافتراضي | شنو تغيّر |
+|---|---|---|---|
+| `decode` | 52.1s | **10.0s** | تخطّي التفكيك |
+| `build` | 65.3s | **27.0s** | ما بقى شي يُعاد تجميعه |
+| `rtl` | 6.6s | **4.3s** | تخطّي الوسوم اللي ما تنترحّل |
+| **الدورة كاملة** | ~117s | **51s** | موقّعة ومتحقَّق منها |
+
+`rtl` أسرع لأن جداول التحويل جنت تشتغل على **كل خاصية بكل وسم**. هسا الوسم
+يُتخطّى إذا ما بيه اسم من الأسماء اللي تعرفها الجداول، فوسوم `layout_width` و
+`text` و `id` تكلّف بحث نصّي واحد. هذا قلّل نداءات بايثون من 692 ألف إلى 288 ألف
+بنفس المخرجات بالبايت.
+
+تريد شجرة `smali/` بعد؟ `--with-sources` مع `decode` أو `all`.
 
 ## شنو يصلّح
 
@@ -286,7 +309,7 @@ Python 3.9+، `apktool`، و Android SDK build-tools (`aapt2`, `zipalign`,
 بأي مكان:
 
 ```sh
-python tests/test_aqlab.py       # 64 فحص، بلا framework، بلا شبكة، بلا apktool
+python tests/test_aqlab.py       # 68 فحص، بلا framework، بلا شبكة، بلا apktool
 ```
 
 الأكثر طلباً: التحقق من صيغ الجمع الست بالعربي، توليد `android:localeConfig`

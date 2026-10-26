@@ -6,25 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Brand kit in `assets/`: `logo.svg`, `banner.svg`, `features.svg`,
-  `before-after.svg` and `og-card.svg` (plus rendered PNGs), all on the GitHub
-  dark palette so they sit flush with the README.
-
-### Performance
-- `rtl` no longer runs the rename tables over every attribute of every element.
-  A tag is skipped unless one of the names the tables know about appears in it,
-  so the common `layout_width` / `text` / `id` tags cost one substring search
-  instead of an attribute scan plus a `migrate_attr` call each. The pre-filter
-  is derived from the tables, so a new rename is covered automatically.
-  Measured on a real 8,447-file decoded tree (125 layouts, 210 values files):
-  **6.62s → 4.31s** best-of-5, and pure-Python function calls **692k → 288k**.
-  Output verified byte-for-byte identical to the previous implementation.
-
 ### Planned
 - plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker
 - vector-drawable mirroring warnings
+
+## [0.1.2] — 2026-10-26
+
+### Performance
+- `decode` (and `all`) now skip `smali/` by default. Disassembling the bytecode was
+  most of the decode time and this tool never edits code, so it was ~50s of work
+  nobody reads. `apktool` records the source APK in `apktool.yml` and copies the
+  original `classes*.dex` back on build unchanged, so the output is unaffected.
+  `--with-sources` restores the old behaviour for anyone who does want to hand-edit
+  code. On a real 17 MB app (8,447-file tree, 125 layouts, 5 dex files):
+  `decode` **52.1s -> 10.0s**, `build` **65.3s -> 27.0s**, whole signed pipeline
+  **~117s -> 51s**. Verified end to end: every dex `sha256` identical to the
+  original, `apksigner verify` OK, `zipalign -c` OK, `supportsRtl=true` and the
+  migrated attributes present in the compiled resources.
+- `rtl` no longer runs the rename tables over every attribute of every element.
+  A tag is skipped unless one of the names the tables know about appears in it, so
+  the common `layout_width` / `text` / `id` tags cost one substring search instead
+  of an attribute scan plus a `migrate_attr` call each. The pre-filter is derived
+  from the tables, so a new rename is covered automatically and it cannot drift.
+  Same tree: **6.62s -> 4.31s** best-of-5, pure-Python calls **692k -> 288k**,
+  output byte-for-byte identical to the previous implementation.
+
+### Added
+- Brand kit in `assets/`: `logo.svg`, `banner.svg`, `features.svg`,
+  `before-after.svg` and `og-card.svg` (plus rendered PNGs), all drawn on the
+  GitHub dark palette so they sit flush with the README.
 
 ## [0.1.1] — 2026-10-26
 

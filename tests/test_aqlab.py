@@ -337,6 +337,26 @@ def test_migrate_prefilter():
           A.rewrite_xml_attrs(plain) == (plain, 0))
 
 
+def test_decode_sources_flag():
+    """decode skips smali by default; --with-sources opts back in.
+
+    Wired hermetically: apktool and the subprocess runner are stubbed so the
+    check needs neither a JRE nor a jar.
+    """
+    seen = []
+    orig_cmd, orig_run = A.apktool_cmd, A.run
+    A.apktool_cmd = lambda: ["apktool"]
+    A.run = lambda cmd, **kw: seen.append(list(cmd))
+    try:
+        for ws in (False, True):
+            A.cmd_decode(argparse.Namespace(apk="x.apk", out="o", framework=None,
+                                            quiet=True, with_sources=ws))
+    finally:
+        A.apktool_cmd, A.run = orig_cmd, orig_run
+    check("decode skips smali by default", "-s" in seen[0])
+    check("--with-sources keeps smali", "-s" not in seen[1])
+
+
 def test_scan(proj):
     rc = A.cmd_scan(argparse.Namespace(target=str(proj), json=True, quiet=True))
     check("scan rc", rc == 0)
@@ -355,6 +375,7 @@ def main():
         test_min_sdk_guard(tmp)
         test_bad_path_guard(tmp)
         test_migrate_prefilter()
+        test_decode_sources_flag()
         test_scan(proj)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0

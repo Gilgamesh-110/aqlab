@@ -31,7 +31,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -412,6 +412,13 @@ def escape_android(text):
 def cmd_decode(args):
     out = args.out or (Path(args.apk).stem + "-decoded")
     ap = apktool_cmd() + ["d", "-f", "--no-debug-info"]
+    # Skipping smali is the single biggest saving in the whole pipeline and it is
+    # free: apktool records the source APK in apktool.yml and copies the original
+    # classes*.dex back on build, byte for byte. This tool never edits code, so
+    # the smali tree is ~50s of disassembly nobody reads. `--with-sources` gets it
+    # back for the cases that do want it.
+    if not getattr(args, "with_sources", False):
+        ap.append("-s")
     if args.framework:
         ap += ["-p", args.framework]
     run(ap + [args.apk, "-o", out], quiet=args.quiet)
@@ -770,7 +777,9 @@ def cmd_build(args):
 
 def cmd_all(args):
     proj = Path(args.apk).stem + "-decoded"
-    cmd_decode(argparse.Namespace(apk=args.apk, out=proj, framework=args.framework, quiet=args.quiet))
+    cmd_decode(argparse.Namespace(apk=args.apk, out=proj, framework=args.framework,
+                                  quiet=args.quiet,
+                                  with_sources=getattr(args, "with_sources", False)))
     cmd_rtl(argparse.Namespace(proj=proj, dry_run=False, quiet=args.quiet,
                                force_min_sdk=getattr(args, "force_min_sdk", False)))
     if args.tsv:
@@ -808,6 +817,9 @@ def build_parser():
     s.add_argument("apk")
     s.add_argument("-o", "--out")
     s.add_argument("-p", "--framework", help="custom apktool framework dir")
+    s.add_argument("--with-sources", action="store_true",
+                   help="also disassemble smali/ (~5x slower; only needed if you "
+                        "intend to edit code — aqlab itself never does)")
     common(s)
     s.set_defaults(func=cmd_decode)
 
@@ -861,6 +873,9 @@ def build_parser():
     s.add_argument("-p", "--framework")
     s.add_argument("-v", "--verbose", action="store_true")
     s.add_argument("--force-min-sdk", action="store_true")
+    s.add_argument("--with-sources", action="store_true",
+                   help="also disassemble smali/ (~5x slower; only needed if you "
+                        "intend to edit code — aqlab itself never does)")
     common(s)
     s.set_defaults(func=cmd_all)
     return p

@@ -152,13 +152,38 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | command | what it does |
 |---|---|
 | `scan <apk\|dir>` | read-only report: locales, `supportsRtl`, remaining `left/right`, coverage. `--json` for tooling. |
-| `decode <apk>` | unpack an APK into an editable project |
+| `decode <apk>` | unpack an APK into an editable project. Skips `smali/` by default — see below. |
 | `rtl <dir>` | set `android:supportsRtl` and migrate `left/right` → `start/end` across `res/**`. `--dry-run` to preview. |
 | `scaffold <dir>` | create `res/values-ar/` and a `strings.tsv` translation table |
 | `apply <dir> --tsv` | import a translated table into `values-ar/strings.xml` |
 | `lint <dir>` | bidi hazards, escaping bugs, format-specifier drift, coverage. Non-zero exit on errors. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | the whole pipeline |
+
+### Speed, and why `decode` skips `smali/`
+
+Disassembling the bytecode is most of the decode time, and this tool never edits
+code — so it is skipped. `apktool` records the source APK in `apktool.yml` and
+copies the original `classes*.dex` back on build **byte for byte**; the end-to-end
+run below was verified with `sha256sum` on every dex, and the built APK passes
+`apksigner verify` and `zipalign -c`.
+
+Measured on a real 17 MB app — an 8,447-file tree, 125 layouts, 210 `values/`
+files, 5 dex files:
+
+| step | with `smali/` | default | what changed |
+|---|---|---|---|
+| `decode` | 52.1s | **10.0s** | skip the disassembly |
+| `build` | 65.3s | **27.0s** | nothing to re-assemble |
+| `rtl` | 6.6s | **4.3s** | tags that cannot migrate are skipped |
+| **whole pipeline** | ~117s | **51s** | signed and verified |
+
+`rtl` got faster because the rename tables used to run over *every attribute of
+every element*. A tag is now skipped unless one of the names the tables know
+about appears in it, so `layout_width` / `text` / `id` tags cost one substring
+search. That cut pure-Python calls from 692k to 288k with byte-identical output.
+
+Need the smali tree after all? `--with-sources` on `decode` or `all`.
 
 ## What it fixes
 
@@ -308,7 +333,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). The test suite is plain asserts and runs
 anywhere:
 
 ```sh
-python tests/test_aqlab.py       # 64 checks, no framework, no network, no apktool
+python tests/test_aqlab.py       # 68 checks, no framework, no network, no apktool
 ```
 
 Most wanted: plural validation for the six Arabic forms, `android:localeConfig`
