@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker
 - vector-drawable mirroring warnings
 
+## [0.1.6] — 2026-11-03
+
+### Packaging
+- **The PyPI page now tells the truth about what this runs on.** The classifier list
+  carried a single `Programming Language :: Python :: 3`, so the rendered "Python
+  Version" badge said `3` and every reader had to open `requires-python` to learn
+  whether their interpreter was supported. It now lists 3.9 through 3.13
+  explicitly, plus `3 :: Only` — the same set `requires-python = ">=3.9"` already
+  enforced, now visible before installing.
+- **`Development Status` moved from `3 - Alpha` to `4 - Beta`.** The alpha label
+  was written before the tool had been run against real apps; it has since been
+  validated on three, building and signing each and reading `supportsRtl` back
+  from the installed manifest. Leaving "Alpha" on the page understated that.
+- Added `Topic :: Software Development :: Build Tools` and `Topic :: Utilities`
+  so the package is reachable from those PyPI browse paths, and `Typing :: Typed`.
+- `[project.urls]` grew from two links to six: `Repository`, `Changelog`,
+  `Documentation` and `Bug Tracker` now appear in the PyPI sidebar, where
+  previously only Homepage and Issues existed.
+
+### Repository
+- Added `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, with a note that
+  disagreement about what a reverse-engineering tool may be used for is not
+  misconduct — critiquing the technique is fine, dismissing the person is not).
+- Added `SUPPORT.md`: where to ask, what a useful bug report contains, and what
+  response to expect. Most reports resolve from the failing `aapt2` line, so the
+  guide asks for that line rather than a summary.
+- Added `.pre-commit-config.yaml` with an optional hook set, plus
+  `tests/check_xml_tabs.py`, which fails on a literal tab in resource XML — aapt2
+  rejects those and a tab is invisible in review.
+
 ## [0.1.5] — 2026-10-27
 
 ### Packaging
