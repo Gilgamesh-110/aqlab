@@ -56,4 +56,15 @@ hazards the linter catches — keep mixed Arabic/Latin lines clean.
 ## Code of conduct
 
 Be direct, be kind, assume good faith. Harassment or personal attacks are not
-tolerated in issues, PRs or discussions.
+tolerated in issues, PRs or discussions. The full text is in
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## Optional: install the commit hooks
+
+```sh
+pip install pre-commit && pre-commit install
+```
+
+The hooks run the test suite and a tab-in-XML guard before each commit. They are
+optional — CI runs the same checks — but they catch the two mistakes that make a
+one-line Arabic fix look like a whole-file diff.
