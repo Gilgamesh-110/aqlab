@@ -13,19 +13,32 @@ license-files = ["LICENSE"]
 authors = [{ name = "Gilgamesh-110" }]
 keywords = ["android", "arabic", "rtl", "i18n", "localization", "apk", "bidi", "right-to-left"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Natural Language :: Arabic",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Localization",
     "Topic :: Software Development :: Internationalization",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Utilities",
+    "Typing :: Typed",
 ]
 
 [project.urls]
 Homepage = "https://github.com/Gilgamesh-110/aqlab"
+Repository = "https://github.com/Gilgamesh-110/aqlab"
 Issues = "https://github.com/Gilgamesh-110/aqlab/issues"
+Changelog = "https://github.com/Gilgamesh-110/aqlab/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/Gilgamesh-110/aqlab#readme"
+"Bug Tracker" = "https://github.com/Gilgamesh-110/aqlab/issues/new/choose"
 
 [project.scripts]
 aqlab = "aqlab:cli"
