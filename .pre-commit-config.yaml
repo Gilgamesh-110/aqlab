@@ -1,0 +1,38 @@
+# Hooks that run on `git commit`, before the commit is created.
+# Install once:  pip install pre-commit && pre-commit install
+#
+# aqlab has no runtime dependencies and its test suite is plain asserts, so these
+# hooks are deliberately cheap — they must never turn a 2-second commit into a
+# 30-second one, or contributors stop installing them.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        # Markdown keeps two trailing spaces as a hard line break.
+        exclude: \.md$
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # The resource XML this tool edits must stay byte-comparable across platforms;
+  # a CRLF leak turns a one-line Arabic fix into a whole-file diff.
+  - repo: local
+    hooks:
+      - id: aqlab-tests
+        name: aqlab test suite (stdlib only, no network)
+        entry: python tests/test_aqlab.py
+        language: system
+        pass_filenames: false
+        files: (aqlab\.py|tests/.*\.py)$
+
+      - id: aqlab-no-tabs-in-xml
+        name: no tabs in resource XML (aapt2 rejects them in attributes)
+        entry: python tests/check_xml_tabs.py
+        language: system
+        files: \.xml$
