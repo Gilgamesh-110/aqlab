@@ -31,7 +31,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -40,59 +40,11 @@ __version__ = "0.1.7"
 RE_ARABIC = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]")
 RE_LATIN = re.compile(r"[A-Za-z]")
 RE_ANY_ALNUM = re.compile(r"[0-9A-Za-z\u0600-\u06FF\u0660-\u0669\u06F0-\u06F9]")
-# Unicode bidi control characters a translator may already have inserted.
-BIDI_MARKS = "\u200e\u200f\u061c\u2066\u2067\u2068\u2069"
 # Android format specifiers: %s %d %1$s %2$d %-5.2f %%
 RE_FORMAT = re.compile(r"%(?:(\d+)\$)?[-#+ 0,(]*\d*(?:\.\d+)?[a-zA-Z%]")
 RE_BARE_PERCENT = re.compile(r"%(?![%nsdioxXeEfgGaAcbhp]|(?:\d+\$)?[-#+ 0,(]*\d*(?:\.\d+)?[a-zA-Z])")
-# A trailing LTR run that will drag following neutral punctuation to the wrong side.
-RE_BIDI_TAIL = re.compile(r"[A-Za-z0-9\u0660-\u0669\u06F0-\u06F9][)\]}.,:;!?%\u060c\u061b\u061f]*$")
 # Markup tags inside a string value (<b>, <i>, <xliff:g>, ...) — must survive translation.
 RE_MARKUP_TAG = re.compile(r"</?([A-Za-z][\w:.]*)")
-
-# --- Mixed-direction runs ---------------------------------------------------
-# An RTL string containing an embedded LTR span (`report_v2.pdf`, `v0.1.6`, a
-# URL) is only a hazard when the span has no *boundary*: the bidi algorithm then
-# resolves the neutrals touching it by context, and an attached `%` or a
-# trailing `(` lands on the wrong side. One boundary character — RLM/LRM/ALM or
-# an isolate opener — on either edge of the run is enough to stop it.
-BIDI_BOUNDARY = "\u200e\u200f\u061c\u2066\u2067\u2068"
-# Any RTL-script letter — Hebrew/Persian/Arabic. `RE_ARABIC` alone misses `he`.
-RE_RTL_SCRIPT = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]")
-# Maximal runs of LTR letters/digits, plus the interstitial characters a span
-# like a filename or a URL is built from.
-RE_LTR_RUN = re.compile(r"[A-Za-z0-9]+(?:[._/:#+@%=-][A-Za-z0-9]+)*")
-# Isolates pair up: FSI…PDI, RLI…PDI, LRI…PDI. PDIs count whenever an opener exists.
-RE_SPAN_ISOLATED = re.compile("[\u2066\u2067\u2068][^\u2069]*\u2069")
-
-
-def _unbound_ltr_runs(text):
-    """LTR runs in a mixed-direction value that carry no bidi boundary.
-
-    Returns one label per distinct offending run, including any neutral
-    punctuation glued to its right edge (`report_v2.pdf.`) — that is the piece
-    that actually flips. An all-Latin value is LTR-simple and never flagged.
-    """
-    if not RE_RTL_SCRIPT.search(text):
-        return []
-    # Blank out spans that are already wrapped in an isolate pair; their runs are
-    # safe and must not be reported while the rest of the line is still checked.
-    masked = RE_SPAN_ISOLATED.sub(lambda m: "\u0001" * len(m.group(0)), text)
-    # Format specifiers are opaque to the reader and to aapt: `%1$d` is not an
-    # LTR run, and blanking it keeps `%1$d` from being reported as `1` and `d`.
-    masked = RE_FORMAT.sub(lambda m: "\u0001" * len(m.group(0)), masked)
-    out = []
-    for m in RE_LTR_RUN.finditer(masked):
-        s, e = m.span()
-        if (s and masked[s - 1] in BIDI_BOUNDARY) or (e < len(masked) and masked[e] in BIDI_BOUNDARY):
-            continue
-        j = e
-        while j < len(masked) and masked[j] in ")]}.,:;!?%\u060c\u061b\u061f":
-            j += 1
-        label = masked[s:j]
-        if label not in out:
-            out.append(label)
-    return out
 
 
 def _formats(text):
@@ -102,12 +54,6 @@ def _formats(text):
 
 def _tags(text):
     return sorted(set(RE_MARKUP_TAG.findall(text)))
-
-
-def _tail_risk(text):
-    """True when text ends in a Latin/digit run that will flip its punctuation.
-    Format specifiers are stripped first — a trailing `%s` is not a hazard."""
-    return bool(RE_BIDI_TAIL.search(RE_FORMAT.sub("", text)))
 
 
 # --------------------------------------------------------------------------
@@ -824,7 +770,7 @@ def scan_project(proj, args):
     lefts = count_legacy_attrs(proj)
     ar_dirs = sorted(p.name for p in res.glob("values-ar*") if p.is_dir())
     print(f"[FINDING] project: {proj}")
-    print(f"  locales        : {', '.join(l.split('-', 1)[-1] for l in loc) or 'default only'}")
+    print(f"  locales        : {', '.join(loc) or 'default only'}")
     print(f"  supportsRtl    : {'yes' if rtl_on else 'NO — run `aqlab rtl`'}")
     print(f"  translatable   : {sum(1 for e in entries if e.translatable)}")
     print(f"  legacy L/R     : {lefts} attribute(s) still left/right — run `aqlab rtl`")
@@ -926,8 +872,6 @@ def cmd_lint(args):
             add("warn", key, "identical to source and contains Latin — probably untranslated")
         elif RE_ARABIC.search(e.text) is None and RE_ANY_ALNUM.search(e.text) and not RE_ARABIC.search(a):
             add("warn", key, "no Arabic characters in the Arabic value")
-        if RE_ARABIC.search(a) and _tail_risk(a) and not any(c in a for c in BIDI_MARKS):
-            add("error", key, "trailing Latin/digit run before punctuation — needs U+200F (RLM)")
         if RE_BARE_PERCENT.search(RE_FORMAT.sub("", a)):
             add("error", key, "bare `%` — must be `%%` or a format specifier, aapt will reject it")
         d_fmt, a_fmt = _formats(e.text), _formats(a)
@@ -948,16 +892,7 @@ def cmd_lint(args):
         if a[:1] in ("@", "?"):
             add("error", key, "value starts with `@` or `?` — must be escaped as \\@ / \\?")
         if RE_ARABIC.search(a) and RE_LATIN.search(a):
-            # `info` by default, but a run with no bidi boundary is the case that
-            # actually renders wrong on a device: `الإصدار v0.1.6.` mirrors into
-            # `v0.1.6.الإصدار` order. Name the run so it can be fixed directly.
-            unbound = _unbound_ltr_runs(a)
-            if unbound:
-                add("warn", key, "mixed run needs a bidi boundary: "
-                    + ", ".join(f"`{r}`" for r in unbound)
-                    + " — wrap in U+2068…U+2069 (FSI…PDI) or add U+200F/U+200E beside it")
-            else:
-                add("info", key, "mixed Arabic + Latin — verify order on a real device")
+            add("info", key, "mixed Arabic + Latin — verify order on a real device")
         if _tags(e.text) != _tags(a):
             add("error", key, f"markup tags differ: source {_tags(e.text) or '-'} "
                               f"vs arabic {_tags(a) or '-'}")

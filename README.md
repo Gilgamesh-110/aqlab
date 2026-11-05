@@ -84,7 +84,7 @@ naive migration.
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [What it fixes](#what-it-fixes)
-- [The part nobody else does: bidi linting](#the-part-nobody-else-does-bidi-linting)
+- [Bidi: what the linter does not claim](#bidi-what-the-linter-does-not-claim)
 - [What it does *not* do](#what-it-does-not-do)
 - [How this relates to other tools](#how-this-relates-to-other-tools)
 - [Tested on](#tested-on)
@@ -225,19 +225,28 @@ between a project that builds and one that dies inside `aapt2` with
 `error: duplicate attribute` — and it is why this works on AppCompat and Material
 layouts, which routinely carry both.
 
-## The part nobody else does: bidi linting
+## Bidi: what the linter does not claim
 
-Arabic runs right-to-left. Numbers, Latin words, file paths and `%1$s`
-placeholders inside it run left-to-right. Where the two meet, the Unicode
-Bidirectional Algorithm reorders runs and punctuation ends up on the wrong side.
+Mixed Arabic and Latin in one string is common and usually correct. `الإصدار
+2.1` renders the way a reader expects with no help, and so does `المجلد test.`.
 
-```
-text:     المجلد test.
-renders:  المجلد test.          the period sits right of "test"; it should sit left
-fix:      المجلد test\u200f.    U+200F RIGHT-TO-LEFT MARK pins it in place
-```
+Earlier versions of this tool reported those as Bidi hazards and prescribed
+`U+200F`. That was wrong, and it was measured wrong:
 
-`aqlab lint` finds that, plus the failures that actually break the build:
+| | claimed | measured |
+|---|---|---|
+| strings checked | — | 200 mixed strings from a shipped APK |
+| device | — | Android 11, `TextView`, `TEXT_DIRECTION_RTL` |
+| defects found | 58 errors, then 534 findings | **0** |
+
+Every character's resolved direction and horizontal span was read out of the
+laid-out `android.text.Layout` and compared against UAX #9. The sentence-final
+period of `المجلد test.` already sits to the left of `test`, which is where a
+reader expects it; inserting `U+200F` before it moved nothing. The rule was
+built by reasoning over character classes instead of measuring, so it fired on
+correct text and buried the findings that matter.
+
+The check is gone. What `lint` reports now is what it can demonstrate:
 
 ```
 [FINDING] lint res/values-ar: 148/190 translated (77.9%)
@@ -245,9 +254,13 @@ fix:      المجلد test\u200f.    U+200F RIGHT-TO-LEFT MARK pins it in place
   [ERROR] discount: bare `%` — must be `%%` or a format specifier, aapt will reject it
   [ERROR] welcome: format specifiers differ: source ['%1$s'] vs arabic ['%s']
   [ERROR] note: unescaped apostrophe — use \' inside Android string resources
-  [ERROR] folder: trailing Latin/digit run before punctuation — needs U+200F (RLM)
+  [ERROR] plurals/selected_count: missing Arabic quantities: few (3-10), many (11-99)
 [FAIL] 4 error(s), 1 warning(s)
 ```
+
+If you do find text that renders wrong on a device, that is a bug report worth
+filing — with the string, the device, and a screenshot. It is not something this
+linter will guess at.
 
 | rule | level |
 |---|---|
@@ -256,7 +269,6 @@ fix:      المجلد test\u200f.    U+200F RIGHT-TO-LEFT MARK pins it in place
 | unescaped `'` inside a string resource | error |
 | value starts with `@` or `?` | error |
 | markup tags (`<b>`, `<xliff:g>`) differ from the source | error |
-| trailing Latin/digit run before punctuation (needs U+200F) | error |
 | an Arabic `<plurals>` missing `other`, `few` or `many` | error |
 | value identical to the source and contains Latin | warn |
 | no Arabic characters in the Arabic value | warn |

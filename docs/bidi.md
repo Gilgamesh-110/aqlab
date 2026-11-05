@@ -1,118 +1,124 @@
-# Bidi: why Arabic strings break in ways translation tools never see
+# Bidi: what this tool measured, and what it no longer claims
 
-This is the long version of the `lint` section in the README. If you only read
-one part, read [The four rules of thumb](#the-four-rules-of-thumb).
+This document exists because `aqlab` shipped a bidi rule that was wrong for nine
+releases. It is written down so the same rule does not come back.
 
-## The setup
+## The rule that was wrong
 
-Arabic is a **strong right-to-left** script. Latin letters and digits are
-**strong left-to-right**. Punctuation, spaces, `%`, `(`, `)`, `.`, `,` are
-**neutral** — they take their direction from whatever is around them.
-
-The Unicode Bidirectional Algorithm (UAX #9) resolves neutral characters by
-looking at the nearest strong character on each side. When those two sides
-disagree, the neutral character has to pick a side, and the rule it follows is
-not the one a human reading the line would expect.
-
-That is the whole source of the problem. Nothing is "wrong" with the text; the
-rendering is correct according to the algorithm and wrong according to the reader.
-
-## A minimal failing example
+For a long time `lint` reported:
 
 ```
-<string name="folder">المجلد test.</string>
+[ERROR] folder: trailing Latin/digit run before punctuation — needs U+200F (RLM)
 ```
 
-Read by a human: *"the folder test."* — the period closes the sentence.
-Rendered by Android:
+It fired when an Arabic string ended in a Latin or digit run followed by
+punctuation, on the theory that the punctuation would be dragged to the wrong
+side. In `0.1.7` that was replaced by a second rule reporting any LTR run
+"without a bidi boundary":
 
 ```
-المجلد test.
+[WARN] ver: mixed run needs a bidi boundary: `v0.1.6.`
 ```
 
-The period attaches to the **left-to-right** run, so it renders at the *right*
-end of `test` — which in the RTL line order appears on the wrong side of the
-sentence. The visual result is that the full stop has jumped.
+Both were built the same way: by reasoning about character classes. Neither was
+ever checked against a renderer.
 
-The fix is a directional mark immediately before the neutral run:
+## What the measurement found
 
-```xml
-<string name="folder">المجلد test\u200f.</string>
+A test app was built and run on Android 11 (`TextView`, `TEXT_DIRECTION_RTL`).
+For each string it read, out of the laid-out `android.text.Layout`:
+
+- the resolved direction of every character's own bidi run (`isRtlCharAt`)
+- the horizontal span it occupies (`getPrimaryHorizontal`, `getSecondaryHorizontal`)
+
+Two hundred mixed Arabic/Latin strings were taken from a shipped APK and run
+through it.
+
+| | claimed by the rule | measured on Android |
+|---|---|---|
+| mixed strings with a defect | 58 (0.1.0–0.1.6), 534 (0.1.7) | **0** |
+
+Specifically:
+
+```
+المجلد test.            period at x=70; `test` spans 84..142 — left of it. Correct.
+نسبة 50% ...            `%` at x=281; `50` spans 281..329 — left of it. Correct.
+الإصدار v0.1.6.         final period left of the Latin run. Correct.
+★ الترقية إلى Premium   renders correctly; no mark changes anything.
 ```
 
-`U+200F` is RIGHT-TO-LEFT MARK — an invisible strong RTL character. It forces the
-following neutrals (the period) to resolve right-to-left, i.e. to the position a
-human expects.
+Adding `U+200F` where the rule said it was missing produced no change in layout
+in any of them.
 
-## The marks you will actually use
+## Why the reasoning failed
 
-| mark | code point | name | what it does |
-|---|---|---|---|
-| RLM | `U+200F` | RIGHT-TO-LEFT MARK | forces the next run RTL |
-| LRM | `U+200E` | LEFT-TO-RIGHT MARK | forces the next run LTR |
-| ALM | `U+061C` | ARABIC LETTER MARK | RTL, and does not break Arabic shaping |
-| LRI / RLI / FSI / PDI | `U+2066`–`U+2069` | isolates | wraps a run so it cannot leak direction outward |
+A neutral character between two strong characters takes their direction (UAX #9
+rule N1). Between a Latin run and Arabic text the character classes look
+ambiguous — but the algorithm is not guessing, and neither is the reader:
 
-Prefer the **isolates** (`U+2066` … `U+2069`) over the marks when you are
-embedding something whole — a filename, a version string, a URL. A mark fixes one
-character boundary; an isolate fixes a span and cannot leak.
+- A final period after a closing Latin word resolves with the Latin run, so it
+  sits at that run's *left* edge, which in an RTL line is the end of the
+  sentence. That is where a reader expects it.
+- A period *inside* a Latin run (`v0.1.6.`) resolves the same way.
+
+The cases a regex cannot see are the ones that need care — but "cannot see" is
+not "is broken". `%1$d` is a format specifier, not text: the formatter replaces
+it before a font ever sees it.
+
+## What replaced it
+
+Nothing. The check was removed.
+
+`lint` reports the failures it can demonstrate:
+
+| finding | why it matters |
+|---|---|
+| `format specifiers differ` | a translator turned `%1$s` into `%s`; the app crashes or prints the wrong argument |
+| `bare %` | aapt rejects the resource outright; the build fails at compile time |
+| `unescaped apostrophe` | same — aapt failure, and it is invisible in a diff |
+| `value starts with @ or ?` | Android reads it as a resource or theme reference, not text |
+| `markup tags differ` | `<b>`, `<i>`, `<xliff:g>` lost in translation |
+| `space mismatch` | two strings concatenated at runtime run together |
+| `identical to source, contains Latin` | probable untranslated string shipped by accident |
+| Arabic `<plurals>` missing `few`/`many`/`other` | the two categories an English source cannot supply, and the ones that cover almost every count |
+
+Mixed Arabic + Latin is reported as `info`, shown only with `--verbose`.
+
+## If you find real broken text
+
+That is worth a bug report: the exact string, the device and API level, the
+widget, and a screenshot or the measured spans. It is not something this linter
+will guess at.
+
+## The marks, for when you need them by hand
+
+| mark | code point | what it does |
+|---|---|---|
+| RLM | `U+200F` | forces the next run RTL |
+| LRM | `U+200E` | forces the next run LTR |
+| ALM | `U+061C` | RTL, and does not break Arabic shaping |
+| LRI / RLI / FSI / PDI | `U+2066`–`U+2069` | isolates a span so it cannot leak direction outward |
+
+Prefer an isolate when embedding something whole — a filename, a version, a URL —
+because it has two edges and one mark cannot leak. A mark fixes one boundary; an
+isolate fixes a span.
 
 ```
 ‏لم يتم العثور على الملف ⁨report_v2.pdf⁩
 ```
 
-Rules of thumb, in order:
-
 1. **Never hand-place marks without checking on a device.** Emulators and IDE
-   previews vary.
-2. **Isolate embedded LTR spans** (filenames, paths, versions, URLs) with
-   `RLI … PDI`.
-3. **Fix trailing punctuation** with `RLM` before the punctuation.
-4. **Leave format specifiers alone.** Do not insert marks inside or immediately
+   previews disagree with each other about edge cases.
+2. **Isolate embedded LTR spans** (filenames, paths, versions, URLs).
+3. **Leave format specifiers alone.** Do not insert marks inside or immediately
    before `%1$s` — you will change what the formatter sees.
-
-## What `aqlab lint` checks, and why
-
-| finding | why it matters |
-|---|---|
-`trailing Latin/digit run before punctuation` | the failing example above: the marker is missing and the neutral run will flip |
-`format specifiers differ` | a translator turned `%1$s` into `%s`; the app crashes or prints the wrong argument |
-`bare %` | aapt rejects the resource outright; the build fails at compile time, usually with an unhelpful message |
-`unescaped apostrophe` | same — aapt failure, and it is invisible in a diff |
-`value starts with @ or ?` | Android reads it as a resource or theme reference, not text |
-`markup tags differ` | `<b>`, `<i>`, `<xliff:g>` lost in translation, losing the styling or the placeholder |
-`space mismatch` | two strings concatenated at runtime run together |
-`identical to source, contains Latin` | probable untranslated string shipped by accident |
-
-Findings that are **not** errors:
-
-- **a plural form dropping the count.** Arabic genuinely omits the number in the
-  `one` and `two` forms (`ملف واحد`, not `١ ملف واحد`). Reported as a warning.
-- **mixed Arabic and Latin in one string.** Very often correct — `الإصدار 2.1`
-  is fine. Reported as `info`, shown only with `--verbose`.
-- **a mixed string whose LTR run has no bidi boundary.** This is the one mixed
-  case that is a real defect: the run is not closed by a boundary, so the neutral
-  punctuation touching it takes its direction from the wrong side and jumps.
-  `الإصدار v0.1.6.` renders as if the full stop belonged to the Latin run.
-  Reported as `warn`, naming the run. Fix by wrapping it — `U+2068…U+2069`
-  (FSI…PDI) covers both edges — or by placing `RLM`/`LRM` next to it. Runs already
-  wrapped in an isolate pair are not reported.
-
-## What the linter cannot do
-
-- It **does not render**. It flags the pattern that usually breaks; only a device
-  confirms it.
-- It cannot see strings built at runtime in Java/Kotlin or in a JS bundle.
-- It does not know your string is a filename, a URL or a sentence. It reasons
-  about characters, not meaning — which is why the findings are phrased as
-  questions ("needs RLM?") rather than verdicts.
 
 ## Testing bidi by hand
 
-Paste a candidate string into a file, then either:
+Print the codepoints, which tells you exactly which marks are present:
 
-- build and look at it on a device, or
-- render the codepoints: `python -c "print(' '.join(hex(ord(c)) for c in 'المجلد test.'))"`
+```sh
+python -c "print(' '.join(hex(ord(c)) for c in 'المجلد test.'))"
+```
 
-The second one tells you exactly which marks are present, which is usually what
-you are arguing about.
+Then render it in a real `TextView` — not a preview pane — and look.

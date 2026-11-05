@@ -206,28 +206,37 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 `aapt2` بخطأ `error: duplicate attribute` — وهي السبب اللي يخلي الأداة تشتغل على
 تصاميم AppCompat و Material، لأنها تجيب الاثنين سوا.
 
-## الجزء اللي ما يسويه غيرنا: فحص bidi
+## bidi: شنو الفحص ما يدّعي
 
-العربية تمشي من اليمين لليسار. بس الأرقام والكلمات اللاتينية ومسارات الملفات
-و`%1$s` داخلها تمشي من اليسار لليمين. لما يلتقون، خوارزمية Unicode للاتجاهين
-تعيد ترتيب المقاطع — وعلامات الترقيم تطلع بالجهة الغلط.
+خلط العربي مع اللاتيني بنفس النص شائع، وغالباً صح. `الإصدار 2.1` يظهر مثل ما
+يتوقع القارئ بلا أي مساعدة، وكذلك `المجلد test.`.
 
-```
-text:     المجلد test.
-renders:  المجلد test.          النقطة تجي يمين "test"؛ لازم تجي يساره
-fix:      المجلد test\u200f.    U+200F (علامة من اليمين لليسار) تثبّتها بمكانها
-```
+النسخ القديمة من الأداة بلّغت عن هاي كأخطاء bidi ووصفت `U+200F`. كان غلط،
+والقياس كان غلط:
 
-`aqlab lint` يمسك هاي، plus الأخطاء اللي **تكسر البناء** فعلاً:
+| | الادعاء | القياس |
+|---|---|---|
+| نصوص مفحوصة | — | 200 نص مختلط من APK منشور |
+| الجهاز | — | أندرويد 11، `TextView`، `TEXT_DIRECTION_RTL` |
+| عيوب موجودة | 58 error، بعدين 534 finding | **صفر** |
+
+كل حرف: اتجاهه المحسوب وحدوده الأفقية، مقروءة من `android.text.Layout`
+المُرتَّب ومقارنة بـUAX #9. النقطة بنهاية `المجلد test.` أصلاً على يسار `test`
+— وهذا مكانها الصح؛ إدخال `U+200F` قبلها ما حرّك شي.
+
+الفحص انشال. اللي يبلّغ عنه `lint` هسه هو اللي يكدر يثبته:
 
 ```
 [FINDING] lint res/values-ar: 148/190 translated (77.9%)
   [ERROR] discount: bare `%` — must be `%%` or a format specifier, aapt will reject it
   [ERROR] welcome: format specifiers differ: source ['%1$s'] vs arabic ['%s']
   [ERROR] note: unescaped apostrophe — use \' inside Android string resources
-  [ERROR] folder: trailing Latin/digit run before punctuation — needs U+200F (RLM)
+  [ERROR] plurals/selected_count: missing Arabic quantities: few (3-10), many (11-99)
 [FAIL] 4 error(s), 1 warning(s)
 ```
+
+إذا لكيت نص يظهر غلط على الجهاز فعلاً، هذا بلاغ يستاهل — مع النص والجهاز
+وصورة. مو شي الأداة تخمّنه.
 
 | القاعدة | المستوى |
 |---|---|
@@ -236,7 +245,6 @@ fix:      المجلد test\u200f.    U+200F (علامة من اليمين لل�
 | `'` غير مهربة داخل مورد نصي | error |
 | القيمة تبدأ بـ`@` أو `?` | error |
 | اختلاف وسوم markup (`<b>`، `<xliff:g>`) عن المصدر | error |
-| مقطع لاتيني/رقمي بنهاية النص قبل الترقيم (يبي U+200F) | error |
 | `<plurals>` عربية ناقصة `other` أو `few` أو `many` | error |
 | القيمة مطابقة للمصدر وفيها لاتيني | warn |
 | ما بيه حروف عربية بالقيمة العربية | warn |

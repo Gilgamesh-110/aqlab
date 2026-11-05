@@ -11,6 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker
 - vector-drawable mirroring warnings
 
+## [0.1.8] — 2026-11-05
+
+### Removed
+- **The bidi "hazard" check, which never detected anything.** Since 0.1.0 `lint`
+  reported a trailing Latin/digit run before punctuation as an error needing
+  `U+200F`; 0.1.7 replaced it with a rule naming any LTR run "without a bidi
+  boundary". Both were written by reasoning over character classes and neither
+  was ever tested against a renderer.
+
+  It was tested now. A `TextView` app on Android 11 (`TEXT_DIRECTION_RTL`) read
+  the resolved direction and horizontal span of every character out of the
+  laid-out `android.text.Layout`, for 200 mixed Arabic/Latin strings taken from a
+  shipped APK. **Zero rendering defects.** In `المجلد test.` the final period
+  already sits to the left of `test`, which is where a reader expects it, and
+  inserting `U+200F` moved nothing.
+
+  Against that ground truth the rules fired 58 errors (0.1.0–0.1.6) and then 534
+  findings (0.1.7) on correct text. On one real APK `lint` went from 58 errors to
+  1 — and the one that remains is a genuine missing `<plurals>` quantity.
+
+  Mixed Arabic and Latin is still reported, as `info`, with `--verbose`. See
+  [docs/bidi.md](docs/bidi.md) for the measurement.
+
+### Changed
+- README and `docs/bidi.md` no longer claim bidi linting. The section now
+  records what was measured and why the old rule was wrong.
+
 ## [0.1.7] — 2026-11-05
 
 ### Added

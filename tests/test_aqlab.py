@@ -236,41 +236,23 @@ def test_lint(proj):
     check("dropped plural placeholder is not an error", rc == 0)
 
 
-def test_tail_risk():
-    check("bidi tail detected", A._tail_risk("المجلد test."))
-    check("pure arabic clean", not A._tail_risk("المجلد جاهز."))
-    check("trailing placeholder is not a hazard", not A._tail_risk("مرحباً %s"))
-    check("trailing positional placeholder not a hazard", not A._tail_risk("مرحباً %1$s"))
-    check("rlM suppresses", "test." in "test.\u200f")
-    check("format list is order-sensitive", A._formats("%1$s") != A._formats("%s"))
+def test_mixed_direction_is_not_a_finding():
+    """Mixed Arabic/Latin is not a defect and must not be reported as one.
 
+    Measured on Android 11 (TextView, RTL): 200 mixed strings taken from a
+    shipped APK, every character's resolved direction and horizontal span
+    compared against UAX #9. Zero defects — no bidi mark was needed for any of
+    them, and adding one changed nothing on `المجلد test.`.
 
-def test_unbound_ltr_runs():
-    """The gap ZCode's own four RTL branches left open: a run with no boundary.
-
-    Direction per block is not enough when a block mixes scripts — the run
-    adjoining the neutral needs a boundary or the neutral flips side.
+    Earlier versions reported `trailing Latin/digit run before punctuation —
+    needs U+200F`, then `mixed run needs a bidi boundary`, for these. Both were
+    derived from reasoning over character classes instead of measuring, and on
+    real strings they fired on correct text: 58 errors on a clean APK, then 534.
+    The check is gone; this test exists so it does not come back by accident.
     """
-    u = A._unbound_ltr_runs
-    check("version run flagged", u("الإصدار v0.1.6.") == ["v0.1.6."])
-    check("isolated version clean", u("الإصدار \u2068v0.1.6\u2069.") == [])
-    check("LRM boundary clean", u("الإصدار v0.1.6\u200e.") == [])
-    # A mark on the RTL side of the run bounds the RTL neutral before it, not the
-    # punctuation after it — a run that ends the string still needs its own edge.
-    check("RLM on the near edge bounds the run", u("الإصدار\u200fv0.1.6") == [])
-    check("RLM at string start does not reach the tail", u("\u200fالإصدار v0.1.6") == ["v0.1.6"])
-    check("LRM after the tail clean", u("الإصدار v0.1.6\u200f") == [])
-    check("filename flagged", u("لم يتم العثور على الملف report_v2.pdf") == ["report_v2.pdf"])
-    check("digit-percent flagged", u("نسبة 50% من المستخدمين") == ["50%"])
-    check("two words flagged separately", u("شغّل npm install الآن") == ["npm", "install"])
-    check("identifier flagged", u("هذا المتغير userName يخزن اسم المستخدم") == ["userName"])
-    check("pure arabic clean", u("مرحبا بالعالم") == [])
-    check("all latin clean", u("hello world") == [])
-    # `%1$d` is a format specifier, not an LTR run — reporting its pieces would
-    # flag every pluralised string in every app.
-    check("placeholder is not a run", u("تم تحديد %1$d ملف") == [])
-    check("hebrew also checked", u("גרסה v0.1.6.") == ["v0.1.6."])
-    check("partial isolate flags the rest", u("الإصدار \u2068report.pdf\u2069 ثم v1.0") == ["v1.0"])
+    for name in ("_tail_risk", "_unbound_ltr_runs", "RE_BIDI_TAIL"):
+        check(f"{name} removed", not hasattr(A, name))
+    check("format list is order-sensitive", A._formats("%1$s") != A._formats("%s"))
     check("tags extracted", A._tags("<b>hi</b>") == ["b"])
 
 
@@ -610,12 +592,39 @@ def test_scan(proj):
     check("scan rc", rc == 0)
 
 
+def test_fixture_locale_qualifier(tmp):
+    """`values-en-rAU` is the locale `en-rAU`, not the locale `rAU`.
+
+    The scan list used to strip everything before the first `-`, so a regional
+    variant printed its region alone and every English locale looked like a
+    language called `rAU`. A whole qualifier list that reads correctly matters
+    more than it sounds: `--locale` and the coverage table both come from it.
+    """
+    proj = Path(tmp) / "locq"
+    res = proj / "res"
+    for d in ("values", "values-ar", "values-en-rAU"):
+        (res / d).mkdir(parents=True)
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+    (proj / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:supportsRtl="true"/></manifest>',
+        encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_scan(argparse.Namespace(target=str(proj), json=False, quiet=True))
+    line = next(l for l in out.getvalue().splitlines() if "locales" in l)
+    listed = [p.strip() for p in line.split(":", 1)[1].split(",")]
+    check("region kept with its language", "en-rAU" in listed)
+    check("region does not stand alone", "rAU" not in listed)
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         proj = fixture(tmp)
         test_escape()
-        test_tail_risk()
-        test_unbound_ltr_runs()
+        test_mixed_direction_is_not_a_finding()
         test_entries(proj)
         test_scaffold_apply(proj, tmp)
         test_rtl(proj)
@@ -630,6 +639,7 @@ def main():
         test_rtl_self_closing_application(tmp)
         test_scan_apk_supports_rtl(tmp)
         test_scan(proj)
+        test_fixture_locale_qualifier(tmp)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0
 
