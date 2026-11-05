@@ -10,6 +10,7 @@ import io
 import re
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -242,6 +243,34 @@ def test_tail_risk():
     check("trailing positional placeholder not a hazard", not A._tail_risk("مرحباً %1$s"))
     check("rlM suppresses", "test." in "test.\u200f")
     check("format list is order-sensitive", A._formats("%1$s") != A._formats("%s"))
+
+
+def test_unbound_ltr_runs():
+    """The gap ZCode's own four RTL branches left open: a run with no boundary.
+
+    Direction per block is not enough when a block mixes scripts — the run
+    adjoining the neutral needs a boundary or the neutral flips side.
+    """
+    u = A._unbound_ltr_runs
+    check("version run flagged", u("الإصدار v0.1.6.") == ["v0.1.6."])
+    check("isolated version clean", u("الإصدار \u2068v0.1.6\u2069.") == [])
+    check("LRM boundary clean", u("الإصدار v0.1.6\u200e.") == [])
+    # A mark on the RTL side of the run bounds the RTL neutral before it, not the
+    # punctuation after it — a run that ends the string still needs its own edge.
+    check("RLM on the near edge bounds the run", u("الإصدار\u200fv0.1.6") == [])
+    check("RLM at string start does not reach the tail", u("\u200fالإصدار v0.1.6") == ["v0.1.6"])
+    check("LRM after the tail clean", u("الإصدار v0.1.6\u200f") == [])
+    check("filename flagged", u("لم يتم العثور على الملف report_v2.pdf") == ["report_v2.pdf"])
+    check("digit-percent flagged", u("نسبة 50% من المستخدمين") == ["50%"])
+    check("two words flagged separately", u("شغّل npm install الآن") == ["npm", "install"])
+    check("identifier flagged", u("هذا المتغير userName يخزن اسم المستخدم") == ["userName"])
+    check("pure arabic clean", u("مرحبا بالعالم") == [])
+    check("all latin clean", u("hello world") == [])
+    # `%1$d` is a format specifier, not an LTR run — reporting its pieces would
+    # flag every pluralised string in every app.
+    check("placeholder is not a run", u("تم تحديد %1$d ملف") == [])
+    check("hebrew also checked", u("גרסה v0.1.6.") == ["v0.1.6."])
+    check("partial isolate flags the rest", u("الإصدار \u2068report.pdf\u2069 ثم v1.0") == ["v1.0"])
     check("tags extracted", A._tags("<b>hi</b>") == ["b"])
 
 
@@ -525,6 +554,57 @@ def test_rtl_self_closing_application(tmp):
         check("self-closing <application/> stays well-formed XML", False, f"{e}: {out}")
 
 
+def test_scan_apk_supports_rtl(tmp):
+    """aapt2 prints a boolean attribute symbolically (`=true`), not as the raw
+    0xffffffff. Testing for the raw value made `scan <apk>` report every real APK
+    as not supporting RTL — a silent false negative on the tool's headline check.
+    """
+    BADGE = ("package: name='com.x' versionCode='1' versionName='1'\n"
+             "locales: '--_--' 'ar' 'en'\n"
+             "application-label:'X'\n")
+
+    def fake_factory(xml_value):
+        def fake_run(cmd, **kw):
+            class R:
+                stdout = ""
+                stderr = ""
+            r = R()
+            if "--file" in cmd:
+                r.stdout = f"  A: http://x:supportsRtl(0x010103af)={xml_value}\n"
+            else:
+                r.stdout = BADGE
+            return r
+        return fake_run
+
+    apk = Path(tmp) / "fake.apk"
+    with zipfile.ZipFile(apk, "w") as z:
+        z.writestr("AndroidManifest.xml", "x")      # scan_apk only lists names
+
+    orig_run, orig_tool = A.run, A.tool
+    out = {}
+    try:
+        A.tool = lambda name: name                    # no real aapt2 needed
+        for label, value, want in (("true", "true", True),
+                                   ("raw", "0xffffffff", True),
+                                   ("false", "false", False)):
+            A.run = fake_factory(value)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                A.cmd_scan(argparse.Namespace(target=str(apk), json=True))
+            out[label] = buf.getvalue()
+    finally:
+        A.run, A.tool = orig_run, orig_tool
+
+    check("scan reads supportsRtl=true (symbolic form)",
+          '"supportsRtl": true' in out["true"], out["true"])
+    check("scan reads the raw 0xffffffff form too",
+          '"supportsRtl": true' in out["raw"], out["raw"])
+    check("scan does not claim RTL when it is false",
+          '"supportsRtl": false' in out["false"], out["false"])
+    check("scan still reads the locales",
+          "'ar'" in out["true"] or "ar" in out["true"], out["true"])
+
+
 def test_scan(proj):
     rc = A.cmd_scan(argparse.Namespace(target=str(proj), json=True, quiet=True))
     check("scan rc", rc == 0)
@@ -535,6 +615,7 @@ def main():
         proj = fixture(tmp)
         test_escape()
         test_tail_risk()
+        test_unbound_ltr_runs()
         test_entries(proj)
         test_scaffold_apply(proj, tmp)
         test_rtl(proj)
@@ -547,6 +628,7 @@ def main():
         test_plural_structure(tmp)
         test_plural_file_roundtrip(tmp)
         test_rtl_self_closing_application(tmp)
+        test_scan_apk_supports_rtl(tmp)
         test_scan(proj)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0

@@ -90,6 +90,13 @@ Findings that are **not** errors:
   `one` and `two` forms (`ملف واحد`, not `١ ملف واحد`). Reported as a warning.
 - **mixed Arabic and Latin in one string.** Very often correct — `الإصدار 2.1`
   is fine. Reported as `info`, shown only with `--verbose`.
+- **a mixed string whose LTR run has no bidi boundary.** This is the one mixed
+  case that is a real defect: the run is not closed by a boundary, so the neutral
+  punctuation touching it takes its direction from the wrong side and jumps.
+  `الإصدار v0.1.6.` renders as if the full stop belonged to the Latin run.
+  Reported as `warn`, naming the run. Fix by wrapping it — `U+2068…U+2069`
+  (FSI…PDI) covers both edges — or by placing `RLM`/`LRM` next to it. Runs already
+  wrapped in an isolate pair are not reported.
 
 ## What the linter cannot do
 

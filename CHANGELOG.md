@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`lint` now names the LTR run that has no bidi boundary, instead of only noting
+  that a string mixes scripts.** Per-block direction (`dir="auto"`) fixes the
+  paragraph; it does nothing for a span inside it. `الإصدار v0.1.6.` still renders
+  with the full stop on the wrong side unless the run is closed by a boundary —
+  RLM/LRM/ALM on either edge, or `U+2068…U+2069` around it. The finding lists the
+  offending run (`v0.1.6.`, `report_v2.pdf`, `50%`) so the fix is a wrap, not an
+  investigation. Warn-level, because it is visible on a device; runs already
+  inside an isolate pair are not reported. Hebrew and Persian are covered by the
+  same check, not only Arabic.
+
 ### Planned
 - plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker

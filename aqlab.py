@@ -46,9 +46,53 @@ BIDI_MARKS = "\u200e\u200f\u061c\u2066\u2067\u2068\u2069"
 RE_FORMAT = re.compile(r"%(?:(\d+)\$)?[-#+ 0,(]*\d*(?:\.\d+)?[a-zA-Z%]")
 RE_BARE_PERCENT = re.compile(r"%(?![%nsdioxXeEfgGaAcbhp]|(?:\d+\$)?[-#+ 0,(]*\d*(?:\.\d+)?[a-zA-Z])")
 # A trailing LTR run that will drag following neutral punctuation to the wrong side.
-RE_BIDI_TAIL = re.compile(r"[A-Za-z0-9\u0660-\u0669\u06F0-\u06F9][)\].,:;!?%\u060c\u061b\u061f]*$")
+RE_BIDI_TAIL = re.compile(r"[A-Za-z0-9\u0660-\u0669\u06F0-\u06F9][)\]}.,:;!?%\u060c\u061b\u061f]*$")
 # Markup tags inside a string value (<b>, <i>, <xliff:g>, ...) — must survive translation.
 RE_MARKUP_TAG = re.compile(r"</?([A-Za-z][\w:.]*)")
+
+# --- Mixed-direction runs ---------------------------------------------------
+# An RTL string containing an embedded LTR span (`report_v2.pdf`, `v0.1.6`, a
+# URL) is only a hazard when the span has no *boundary*: the bidi algorithm then
+# resolves the neutrals touching it by context, and an attached `%` or a
+# trailing `(` lands on the wrong side. One boundary character — RLM/LRM/ALM or
+# an isolate opener — on either edge of the run is enough to stop it.
+BIDI_BOUNDARY = "\u200e\u200f\u061c\u2066\u2067\u2068"
+# Any RTL-script letter — Hebrew/Persian/Arabic. `RE_ARABIC` alone misses `he`.
+RE_RTL_SCRIPT = re.compile(r"[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]")
+# Maximal runs of LTR letters/digits, plus the interstitial characters a span
+# like a filename or a URL is built from.
+RE_LTR_RUN = re.compile(r"[A-Za-z0-9]+(?:[._/:#+@%=-][A-Za-z0-9]+)*")
+# Isolates pair up: FSI…PDI, RLI…PDI, LRI…PDI. PDIs count whenever an opener exists.
+RE_SPAN_ISOLATED = re.compile("[\u2066\u2067\u2068][^\u2069]*\u2069")
+
+
+def _unbound_ltr_runs(text):
+    """LTR runs in a mixed-direction value that carry no bidi boundary.
+
+    Returns one label per distinct offending run, including any neutral
+    punctuation glued to its right edge (`report_v2.pdf.`) — that is the piece
+    that actually flips. An all-Latin value is LTR-simple and never flagged.
+    """
+    if not RE_RTL_SCRIPT.search(text):
+        return []
+    # Blank out spans that are already wrapped in an isolate pair; their runs are
+    # safe and must not be reported while the rest of the line is still checked.
+    masked = RE_SPAN_ISOLATED.sub(lambda m: "\u0001" * len(m.group(0)), text)
+    # Format specifiers are opaque to the reader and to aapt: `%1$d` is not an
+    # LTR run, and blanking it keeps `%1$d` from being reported as `1` and `d`.
+    masked = RE_FORMAT.sub(lambda m: "\u0001" * len(m.group(0)), masked)
+    out = []
+    for m in RE_LTR_RUN.finditer(masked):
+        s, e = m.span()
+        if (s and masked[s - 1] in BIDI_BOUNDARY) or (e < len(masked) and masked[e] in BIDI_BOUNDARY):
+            continue
+        j = e
+        while j < len(masked) and masked[j] in ")]}.,:;!?%\u060c\u061b\u061f":
+            j += 1
+        label = masked[s:j]
+        if label not in out:
+            out.append(label)
+    return out
 
 
 def _formats(text):
@@ -128,8 +172,16 @@ RE_ATTR = re.compile(r'([A-Za-z_][\w.:-]*)\s*=\s*"([^"]*)"')
 # (``layout_width``, ``text``, ``id`` …) matches nothing, so this skips both the
 # attribute scan and a ``migrate_attr`` call per attribute. Derived from the
 # tables, so a new rename is covered automatically and it cannot drift.
-RE_MAY_MIGRATE = re.compile("|".join(map(re.escape, sorted(
-    set(ATTR_RENAME) | GRAVITY_ATTRS | TEXT_ALIGN_ATTRS | set(THEME_VALUE_MAP)))))
+RE_MAY_MIGRATE = re.compile("|".join(sorted(
+    set(ATTR_RENAME) | GRAVITY_ATTRS | TEXT_ALIGN_ATTRS | set(THEME_VALUE_MAP))))
+
+# Language qualifiers only. `res/` is full of other qualifiers — values-ldrtl,
+# values-night, values-h480dp, values-sw600dp, values-v31, values-w320dp-land,
+# values-watch — and reporting those as locales buries the real ones.
+# `b+sr+Latn` is the BCP 47 form aapt writes for the newer syntax.
+RE_LOCALE_Q = re.compile(r"^(?:b\+[a-z0-9+]+|[a-z]{2,3}(?:-r?[A-Z]{2}|-[A-Z][a-z]{3})?)$")
+# 2–3 lowercase letters is also how a few *non*-locale qualifiers are spelled.
+NON_LOCALE_QUALIFIERS = {"car", "any"}
 
 
 def migrate_attr(name, value):
@@ -761,7 +813,12 @@ def scan_project(proj, args):
         raise Fail("no values/strings.xml — is this a decoded project?")
     res = Path(proj) / "res"
     entries = read_locale_entries(res, ["values"])
-    loc = sorted({p.parent.name for p in res.glob("values-*/*.xml")})
+    # res/ has far more qualified directories than locales — values-ldrtl, values-night,
+    # values-h480dp, values-sw600dp, values-v31, values-w320dp-land, values-watch. Listing
+    # them as "locales" buries the seven real ones under thirty qualifiers.
+    loc = sorted({d.name[len("values-"):] for d in res.glob("values-*")
+                  if d.is_dir() and RE_LOCALE_Q.match(d.name[len("values-"):])
+                  and d.name[len("values-"):] not in NON_LOCALE_QUALIFIERS})
     manifest = (Path(proj) / "AndroidManifest.xml").read_text(encoding="utf-8", errors="replace")
     rtl_on = bool(re.search(r'supportsRtl\s*=\s*"true"', manifest))
     lefts = count_legacy_attrs(proj)
@@ -808,7 +865,15 @@ def scan_apk(apk, args):
             label = line.split(":", 1)[1].strip()
     xml = run([aapt2, "dump", "xmltree", "--file", "AndroidManifest.xml", apk],
               quiet=True, check=False).stdout
-    rtl_on = "supportsRtl" in xml and "0xffffffff" in xml.split("supportsRtl", 1)[1][:120]
+    # aapt2 renders a boolean attribute symbolically — supportsRtl(0x010103af)=true —
+    # not as the raw 0xffffffff, so testing for the raw value never matched and
+    # every real APK was reported as not supporting RTL. Accept both renderings,
+    # and treat an explicit =false as false rather than as absence.
+    m_rtl = re.search(r"supportsRtl\(0x[0-9a-fA-F]+\)\s*=\s*(true|false|0x[0-9a-fA-F]+)", xml)
+    if m_rtl:
+        rtl_on = m_rtl.group(1).lower() in ("true", "0xffffffff")
+    else:
+        rtl_on = bool(re.search(r'supportsRtl[^\n]*\(Raw:\s*"?true"?\)', xml))
     with zipfile.ZipFile(apk) as z:
         names = z.namelist()
     has_dpi = any(n.startswith("lib/") for n in names)
@@ -883,7 +948,16 @@ def cmd_lint(args):
         if a[:1] in ("@", "?"):
             add("error", key, "value starts with `@` or `?` — must be escaped as \\@ / \\?")
         if RE_ARABIC.search(a) and RE_LATIN.search(a):
-            add("info", key, "mixed Arabic + Latin — verify order on a real device")
+            # `info` by default, but a run with no bidi boundary is the case that
+            # actually renders wrong on a device: `الإصدار v0.1.6.` mirrors into
+            # `v0.1.6.الإصدار` order. Name the run so it can be fixed directly.
+            unbound = _unbound_ltr_runs(a)
+            if unbound:
+                add("warn", key, "mixed run needs a bidi boundary: "
+                    + ", ".join(f"`{r}`" for r in unbound)
+                    + " — wrap in U+2068…U+2069 (FSI…PDI) or add U+200F/U+200E beside it")
+            else:
+                add("info", key, "mixed Arabic + Latin — verify order on a real device")
         if _tags(e.text) != _tags(a):
             add("error", key, f"markup tags differ: source {_tags(e.text) or '-'} "
                               f"vs arabic {_tags(a) or '-'}")
