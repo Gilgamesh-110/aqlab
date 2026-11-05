@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - coverage report per file rather than one number
 - RTL beyond Arabic (`he`, `fa`, `ur`)
 
+## [0.1.12] — 2026-11-06
+
+### Fixed
+- **The `--force` backup made projects unbuildable.** 0.1.9 started writing
+  `values-ar/strings.xml.bak` next to the file it replaced. `aapt2` rejects any
+  file under `res/` that is not a resource:
+
+  ```
+  error: invalid file path 'res/values-ar/strings.xml.bak'.
+  ```
+
+  Found by building a real APK instead of only running the tests — the tests
+  never compiled the tree. The copy now goes to `<proj>/aqlab-backup-<locale>/`,
+  outside `res/`, which is the rule the translation table already followed.
+  Verified end to end: 84 MB APK built, zipaligned, signed, `apksigner verify`
+  returns VERIFIED.
+
 ## [0.1.11] — 2026-11-06
 
 The three open issues, each verified against a real APK and mutated to prove
