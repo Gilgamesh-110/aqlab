@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+- plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
+- `android:localeConfig` scaffolding for the Android 13+ per-app language picker
+- vector-drawable mirroring warnings
+
+## [0.1.7] — 2026-11-05
+
 ### Added
 - **`lint` now names the LTR run that has no bidi boundary, instead of only noting
   that a string mixes scripts.** Per-block direction (`dir="auto"`) fixes the
@@ -16,11 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   investigation. Warn-level, because it is visible on a device; runs already
   inside an isolate pair are not reported. Hebrew and Persian are covered by the
   same check, not only Arabic.
+- Format specifiers are opaque to the check: `%1$d` is not reported as the runs
+  `1` and `d`, so a pluralised string does not light up.
 
-### Planned
-- plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
-- `android:localeConfig` scaffolding for the Android 13+ per-app language picker
-- vector-drawable mirroring warnings
+### Fixed
+- **`scan` reported `supportsRtl: no` on every real APK.** The check looked for
+  the raw `0xffffffff` aapt1 prints; aapt2 renders the boolean symbolically
+  (`supportsRtl(0x010103af)=true`), so the test never matched. Both renderings are
+  accepted now, and an explicit `=false` is read as false rather than as absence.
+- **Locale detection listed resource qualifiers as languages.** Any `values-*`
+  directory counted, so `values-night`, `values-ldrtl`, `values-sw600dp`,
+  `values-v31` and `values-w320dp-land` all appeared in the locale list — seven
+  real locales buried under thirty qualifiers. Only language qualifiers are
+  reported now, including the `b+sr+Latn` form.
 
 ## [0.1.6] — 2026-11-03
 
