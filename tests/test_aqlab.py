@@ -8,6 +8,7 @@ import argparse
 import contextlib
 import io
 import re
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -116,6 +117,86 @@ def test_entries(proj):
     check("translatable=false caught",
           [e.key for e in entries if not e.translatable] == ["skip"])
     check("default strings found", A.find_default_strings(proj) == p)
+
+
+def test_apply_preserves_existing(proj, tmp):
+    """A half-filled table must not delete the translations beside it.
+
+    `apply` rewrites whole files, so every key with a blank third column used to
+    vanish from `values-ar` — and the run reported only the rows it wrote. A
+    1,200-string locale came back with 5 strings and one `[DONE]` line.
+    """
+    work = Path(tmp) / "keep"
+    shutil.copytree(proj, work)
+    res = work / "res"
+    ar = res / "values-ar"
+    ar.mkdir(parents=True, exist_ok=True)
+    # keys that really exist in values/, plus the plural, so apply can match them
+    src_keys = [e.key for e in A.read_locale_entries(res, ["values"]) if e.translatable]
+    existing = {k: f"نص {k}" for k in src_keys}
+    body = "\n".join(f'    <string name="{k}">{v}</string>'
+                     for k, v in existing.items() if "|" not in k)
+    pl_items = "".join(f'<item quantity="{q}">نص {q}</item>'
+                       for q in A.ARABIC_PLURAL_CATEGORIES)
+    (ar / "strings.xml").write_text(
+        f'<?xml version="1.0" encoding="utf-8"?>\n<resources>\n{body}\n'
+        f'<plurals name="files">{pl_items}</plurals>\n</resources>\n',
+        encoding="utf-8")
+
+    tsv = work / "t.tsv"
+    rows = ["# key\tsource\ttranslation"]
+    for i, k in enumerate(src_keys):
+        rows.append(f"{k}\tsource {i}\t" + ("ترجمة جديدة" if i < 3 else ""))
+    tsv.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    rc = A.cmd_apply(argparse.Namespace(proj=str(work), tsv=str(tsv), locale="ar",
+                                        quiet=True))
+    check("apply rc", rc == 0)
+    got = {e.key: e.text for e in A.read_entries(ar / "strings.xml") if e.kind == "string"}
+    plain = [k for k in src_keys if "|" not in k]
+    check("nothing lost", len(got) == len(plain), str(len(got)))
+    check("table wins where filled", got[plain[0]] == "ترجمة جديدة")
+    check("existing kept where blank", got[plain[-1]] == f"نص {plain[-1]}")
+
+
+def test_apply_does_not_duplicate_plurals(proj, tmp):
+    """Re-applying must not double every plural item.
+
+    Existing plurals come back from the locale folder as `name|quantity` and the
+    same keys also come from the source entries; both used to be appended, so
+    `plurals.xml` grew duplicate `one`/`other` items on every run.
+    """
+    work = Path(tmp) / "plur"
+    res = work / "res"
+    for d in ("values", "values-ar"):
+        (res / d).mkdir(parents=True)
+    (res / "values" / "plurals.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<plurals name="files"><item quantity="one">%d file</item>'
+        '<item quantity="other">%d files</item></plurals></resources>', encoding="utf-8")
+    (res / "values-ar" / "plurals.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<plurals name="files"><item quantity="one">ملف واحد</item>'
+        '<item quantity="few">%d ملفات</item><item quantity="many">%d ملفاً</item>'
+        '<item quantity="other">%d ملف</item></plurals></resources>', encoding="utf-8")
+    (res / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<string name="app_name">App</string></resources>', encoding="utf-8")
+    (work / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:supportsRtl="true"/></manifest>',
+        encoding="utf-8")
+    tsv = work / "t.tsv"
+    tsv.write_text("# key\tsource\ttranslation\nfiles|one\t%d file\tملف واحد\n",
+                   encoding="utf-8")
+
+    for _ in range(2):
+        rc = A.cmd_apply(argparse.Namespace(proj=str(work), tsv=str(tsv), locale="ar",
+                                           quiet=True))
+        check("plural apply rc", rc == 0)
+    items = [e for e in A.read_entries(res / "values-ar" / "plurals.xml") if e.kind == "plural"]
+    check("four categories, not eight", len(items) == 4)
+    check("no duplicate quantity", len({e.key for e in items}) == 4)
 
 
 def test_scaffold_apply(proj, tmp):
@@ -627,6 +708,8 @@ def main():
         test_mixed_direction_is_not_a_finding()
         test_entries(proj)
         test_scaffold_apply(proj, tmp)
+        test_apply_preserves_existing(proj, tmp)
+        test_apply_does_not_duplicate_plurals(proj, tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)

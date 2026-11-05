@@ -11,6 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker
 - vector-drawable mirroring warnings
 
+## [0.1.9] — 2026-11-05
+
+### Fixed
+- **`apply` no longer deletes the translations it was not given.** It rewrites
+  whole files from the table, so every key with a blank third column vanished
+  from `values-ar`. A locale with 1,200 finished strings, applied against a
+  table with five filled rows, came back as five strings — and printed
+  `[DONE] 5 translation(s)` with no mention that 1,195 were gone.
+
+  Existing translations are now read from the locale folder and merged: the
+  table wins where it has text, the folder fills in the rest. The run reports
+  what it kept. Verified on a 1,200-string locale: 5 updated, 1,195 kept.
+
+- **`apply` no longer duplicates every plural item.** Plurals come back from the
+  locale folder as `name|quantity` and the same keys also come from the source
+  entries; both were appended, so `plurals.xml` gained duplicate `one` and
+  `other` items on each run. `write_strings_xml` drops a key it has already
+  written.
+
+- **`scaffold --force` keeps a copy.** It rewrote the locale folder from the
+  table and discarded translations the table did not carry, with no backup. It
+  now writes `<file>.bak` beside them and reports how many it is about to lose;
+  with a table present, existing translations are merged back in.
+
 ## [0.1.8] — 2026-11-05
 
 ### Removed
