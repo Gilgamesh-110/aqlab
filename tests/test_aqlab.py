@@ -243,6 +243,204 @@ def test_markup_survives_apply(tmp):
     check("stray < still escaped", A.escape_android("a < b") == "a &lt; b")
 
 
+def test_locale_config(tmp):
+    """scaffold writes res/xml/locales_config.xml and the manifest attribute.
+
+    Verified with aapt2 that the generated file compiles and that
+    `@xml/locales_config` links against the manifest — the attribute is not a
+    string, and a wrong resource name fails at link time, not at write time.
+    """
+    root = Path(tmp) / "loc"
+    res = root / "res"
+    for d in ("values", "values-ar", "values-fr", "values-sw600dp", "values-night"):
+        (res / d).mkdir(parents=True)
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x">\n    <uses-sdk android:minSdkVersion="34"/>\n'
+        '    <application android:label="x">\n'
+        '        <activity android:name=".M"/>\n    </application>\n</manifest>\n',
+        encoding="utf-8")
+
+    check("locales found, qualifiers excluded",
+          A.existing_locales(res) == ["ar", "fr"], str(A.existing_locales(res)))
+
+    A.cmd_scaffold(argparse.Namespace(proj=str(root), locale="ar", tsv=None,
+                                      force=True, quiet=True))
+    cfg = res / "xml" / "locales_config.xml"
+    check("config written", cfg.exists())
+    text = cfg.read_text(encoding="utf-8")
+    check("two locales, not five", text.count("<locale ") == 2, str(text.count("<locale ")))
+    check("sw600dp excluded", "sw600dp" not in text)
+    check("xmlns declared", "xmlns:android" in text)
+
+    import xml.etree.ElementTree as ET
+    doc = ET.fromstring(text)
+    names = [e.get("{http://schemas.android.com/apk/res/android}name") for e in doc]
+    check("locale names parsed", names == ["ar", "fr"], str(names))
+
+    man = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
+    check("manifest attribute", 'android:localeConfig="@xml/locales_config"' in man)
+    check("manifest still parses", ET.fromstring(man) is not None)
+
+    # a second run must not append the attribute again
+    A.cmd_scaffold(argparse.Namespace(proj=str(root), locale="ar", tsv=None,
+                                      force=True, quiet=True))
+    man2 = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
+    check("idempotent", man2.count("localeConfig") == 1, str(man2.count("localeConfig")))
+
+    # below API 33 the config is inert — skip it rather than ship dead config
+    low = Path(tmp) / "low"
+    lowres = low / "res"
+    for d in ("values", "values-ar"):
+        (lowres / d).mkdir(parents=True)
+        (lowres / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+    (low / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.y"><uses-sdk android:minSdkVersion="26"/>'
+        '<application android:label="y"/></manifest>', encoding="utf-8")
+    A.cmd_scaffold(argparse.Namespace(proj=str(low), locale="ar", tsv=None,
+                                      force=True, quiet=True))
+    check("skipped under API 33", not (lowres / "xml" / "locales_config.xml").exists())
+    check("no attribute under API 33",
+          "localeConfig" not in (low / "AndroidManifest.xml").read_text(encoding="utf-8"))
+
+    # the opt-out has to be honoured even when the SDK is new enough
+    A.cmd_scaffold(argparse.Namespace(proj=str(root), locale="ar", tsv=None, force=True,
+                                      quiet=True, no_locale_config=True))
+    check("opt-out honoured", cfg.exists())  # left from the first run, not rewritten
+
+    # an app that already ships its own config must keep it, and must be told
+    own = Path(tmp) / "own"
+    ownres = own / "res"
+    for d in ("values", "values-ar"):
+        (ownres / d).mkdir(parents=True)
+        (ownres / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+    (own / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.z"><uses-sdk android:minSdkVersion="34"/>'
+        '<application android:localeConfig="@xml/their_own" android:label="z">'
+        '<activity android:name=".M"/></application></manifest>', encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_scaffold(argparse.Namespace(proj=str(own), locale="ar", tsv=None,
+                                          force=True, quiet=True))
+    own_man = (own / "AndroidManifest.xml").read_text(encoding="utf-8")
+    check("their attribute untouched", '@xml/their_own' in own_man)
+    check("no duplicate localeConfig", own_man.count("localeConfig") == 1)
+    check("no stray config written", not (ownres / "xml" / "locales_config.xml").exists())
+    check("told the user", "their_own" in out.getvalue(), out.getvalue()[:200])
+
+
+def test_text_like_vectors(tmp):
+    """Only real lettering is reported — never a badge by name alone.
+
+    Measured against a real APK first: 215 drawables, of which 86 are vectors,
+    every one of them 2 paths. A name-based rule would have flagged
+    `bg_elo_badge.xml` (a `<shape>` background) and
+    `abc_ic_arrow_drop_right_black_24dp.xml` (already `autoMirrored`), and a user
+    who is warned about correct files stops reading the warnings.
+    """
+    root = Path(tmp) / "vec"
+    res = root / "res"
+    for d in ("values", "values-ar", "drawable"):
+        (res / d).mkdir(parents=True)
+    for d in ("values", "values-ar"):
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="x"/></manifest>', encoding="utf-8")
+
+    def vector(name, paths, extra=""):
+        p = "\n".join(f'    <path android:fillColor="#000" android:pathData="M{i},0 L{i+2},0 Z"/>'
+                      for i in range(paths))
+        (res / "drawable" / name).write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            f'<vector xmlns:android="http://schemas.android.com/apk/res/android"\n'
+            f'    android:width="120.0dip" android:height="32.0dip"{extra}\n'
+            f'    android:viewportWidth="120.0" android:viewportHeight="32.0">\n{p}\n'
+            '</vector>\n', encoding="utf-8")
+
+    vector("logo_wordmark.xml", 20)                       # lettering
+    vector("ic_star.xml", 2)                              # ordinary icon
+    vector("logo_mirrored.xml", 20, ' android:autoMirrored="true"')  # already handled
+    (res / "drawable" / "bg_badge.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<shape xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' android:shape="rectangle"><solid android:color="#f00"/></shape>', encoding="utf-8")
+
+    # A `<layer-list>` that assembles many shapes has plenty of paths but is a
+    # composed background, not lettering — the `<vector>` guard is what keeps it
+    # out, so this case has to exist or that guard is untested.
+    layers = "".join(f'<item android:drawable="@drawable/p{i}"/>' for i in range(15))
+    shapes = "".join('<path android:pathData="M0,0 L1,1 Z"/>' for _ in range(15))
+    (res / "drawable" / "bg_layered.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<layer-list xmlns:android="http://schemas.android.com/apk/res/android">'
+        f'{layers}{shapes}</layer-list>', encoding="utf-8")
+
+    got = [v[0] for v in A.text_like_vectors(root)]
+    check("lettering found", "res/drawable/logo_wordmark.xml" in got, str(got))
+    check("ordinary icon not flagged", "res/drawable/ic_star.xml" not in got, str(got))
+    check("autoMirrored not flagged", "res/drawable/logo_mirrored.xml" not in got, str(got))
+    check("shape named badge not flagged", "res/drawable/bg_badge.xml" not in got, str(got))
+    check("layer-list with paths not flagged", "res/drawable/bg_layered.xml" not in got, str(got))
+    check("exactly one finding", len(got) == 1, str(got))
+
+
+def test_forced_scaffold_keeps_six_plural_forms(proj, tmp):
+    """A forced scaffold must not drop the categories the source never had.
+
+    Arabic needs six plural categories and an English source declares two. The
+    other four live in `values-ar` and nowhere else, so building the output by
+    iterating the *source* entries lost them: a real locale went from 54
+    quantities to 18 on `scaffold --force`, and `.bak` only records the fall.
+    """
+    root = Path(tmp) / "six"
+    res = root / "res"
+    (res / "values").mkdir(parents=True)
+    (res / "values-ar").mkdir(parents=True)
+    (res / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<plurals name="files"><item quantity="one">%d file</item>'
+        '<item quantity="other">%d files</item></plurals></resources>', encoding="utf-8")
+    (res / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<plurals name="files">'
+        '<item quantity="zero">لا ملفات</item>'
+        '<item quantity="one">ملف واحد</item>'
+        '<item quantity="two">ملفان</item>'
+        '<item quantity="few">%d ملفات</item>'
+        '<item quantity="many">%d ملفاً</item>'
+        '<item quantity="other">%d ملف</item>'
+        '</plurals></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="x"/></manifest>', encoding="utf-8")
+
+    A.cmd_scaffold(argparse.Namespace(proj=str(root), locale="ar", tsv=None,
+                                      force=True, quiet=True))
+    items = [e for e in A.read_entries(res / "values-ar" / "strings.xml")
+             if e.kind == "plural"]
+    check("all six survive", len(items) == 6, str(sorted(e.key for e in items)))
+    got = {e.key: e.text for e in items}
+    check("zero kept", got.get("files|zero") == "لا ملفات")
+    check("two kept", got.get("files|two") == "ملفان")
+    check("few kept", got.get("files|few") == "%d ملفات")
+    check("many kept", got.get("files|many") == "%d ملفاً")
+
+
 def test_scaffold_apply(proj, tmp):
     rc = A.cmd_scaffold(argparse.Namespace(proj=str(proj), locale="ar", tsv=None,
                                           force=False, quiet=True))
@@ -755,6 +953,9 @@ def main():
         test_apply_preserves_existing(proj, tmp)
         test_apply_does_not_duplicate_plurals(proj, tmp)
         test_markup_survives_apply(tmp)
+        test_locale_config(tmp)
+        test_text_like_vectors(tmp)
+        test_forced_scaffold_keeps_six_plural_forms(proj, tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)

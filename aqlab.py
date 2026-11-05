@@ -31,7 +31,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -752,6 +752,90 @@ def write_tsv(path, entries, tsv_map):
     Path(path).write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
+def existing_locales(res):
+    """Locale qualifiers that already have a `res/values-*` folder.
+
+    `values-en-rAU` sorts before `values-fr`, so the list is ordered by the
+    locale string rather than by folder name — the config is easier to read and
+    to diff that way.
+    """
+    res = Path(res)
+    if not res.is_dir():
+        return []
+    out = set()
+    for d in res.iterdir():
+        if not d.is_dir() or not d.name.startswith("values-"):
+            continue
+        qual = d.name[len("values-"):]
+        # skip density/size/version qualifiers — only language tags go in the file
+        if not re.match(r"^[a-z]{2,3}(-r[A-Z]{2}|-r\d{3}|-b\+[A-Za-z0-9+]+)?$", qual):
+            continue
+        out.add(qual.replace("-r", "-").replace("-b+", "-"))
+    return sorted(out)
+
+
+def write_locale_config(proj, locales, dry=False):
+    """res/xml/locales_config.xml + android:localeConfig on <application>.
+
+    Android 13 (API 33) reads this file to populate the per-app language picker
+    in Settings. Without it the app still follows the system locale, but the user
+    cannot pick Arabic for this app alone — which is the whole point of shipping
+    a translation for a device set to another language.
+
+    Returns the list of changes, same shape as patch_rtl.
+    """
+    proj = Path(proj)
+    changes = []
+    if not locales:
+        return changes
+
+    # Look at the manifest before writing anything: if the app already points at
+    # its own config, ours would be dead config and their attribute must not be
+    # rewritten. Deciding this after writing the file leaves a stray resource.
+    man = proj / "AndroidManifest.xml"
+    man_txt = man.read_bytes().decode("utf-8", "replace") if man.exists() else ""
+    m = re.search(r"<application\b[^>]*>", man_txt, re.DOTALL)
+    tag = m.group(0) if m else ""
+    if "localeConfig" in tag:
+        existing = re.search(r'localeConfig\s*=\s*"([^"]*)"', tag)
+        changes.append(f"skipped — app already declares "
+                       f"{existing.group(1) if existing else 'localeConfig'}; "
+                       f"add the new locales there")
+        return changes
+
+    xml_dir = proj / "res" / "xml"
+    cfg = xml_dir / "locales_config.xml"
+    body = ['<?xml version="1.0" encoding="utf-8"?>', "<locale-config>"]
+    for loc in locales:
+        body.append(f'    <locale android:name="{loc}"/>')
+    body.append("</locale-config>")
+    text = "\n".join(body) + "\n"
+
+    # xmlns is required on the root or aapt2 rejects the file
+    text = text.replace("<locale-config>",
+                        '<locale-config xmlns:android='
+                        '"http://schemas.android.com/apk/res/android">')
+
+    old = cfg.read_text(encoding="utf-8") if cfg.exists() else None
+    if old != text:
+        changes.append(f"res/xml/locales_config.xml: {len(locales)} locale(s)")
+        if not dry:
+            xml_dir.mkdir(parents=True, exist_ok=True)
+            cfg.write_text(text, encoding="utf-8")
+
+    if m:
+        if tag.endswith("/>"):
+            new = tag[:-2].rstrip() + '\n        android:localeConfig="@xml/locales_config"/>'
+        else:
+            new = tag[:-1].rstrip() + '\n        android:localeConfig="@xml/locales_config">'
+        if new != tag:
+            updated = man_txt[:m.start()] + new + man_txt[m.end():]
+            changes.append('AndroidManifest.xml: android:localeConfig="@xml/locales_config"')
+            if not dry:
+                man.write_bytes(updated.encode("utf-8"))
+    return changes
+
+
 def cmd_scaffold(args):
     res = Path(args.proj) / "res"
     if not find_default_strings(args.proj):
@@ -780,6 +864,23 @@ def cmd_scaffold(args):
             if v.strip():
                 merged[k] = v
     have = [(e, merged[e.key]) for e in entries if merged.get(e.key)]
+    # Arabic has six plural categories and the English source declares two, so
+    # the four the source cannot supply (`zero`, `two`, `few`, `many`) are in the
+    # locale folder but not in `entries`. Iterating entries alone dropped them on
+    # every forced scaffold: 54 quantities became 18, and 36 already-translated
+    # forms were lost. They have no source entry, so one is synthesised.
+    known = {e.key for e in entries}
+    pl_home = {}
+    for e in entries:
+        if e.kind == "plural":
+            pl_home.setdefault(e.key.split("|", 1)[0], e)
+    for key, text in merged.items():
+        if key in known or not text.strip():
+            continue
+        name, sep, qty = key.partition("|")
+        anchor = pl_home.get(name) if sep else None
+        if anchor and qty in ARABIC_PLURAL_CATEGORIES:
+            have.append((Entry(key, "plural", anchor.attrs, "", True, anchor.src), text))
 
     # `--force` rewrites the locale folder from the table. If the folder already
     # held translations the table does not, they are about to disappear: keep a
@@ -811,6 +912,18 @@ def cmd_scaffold(args):
     print(f"       translated: {len(have)}   pending: {len(rows) - len(have)}")
     print(f"       translate:  {tsv}")
     print(f"       then:       aqlab apply {args.proj} --tsv {tsv}")
+
+    # The per-app language picker is API 33+. Below that the config is inert, so
+    # writing it would only add a file to explain — say why instead of failing.
+    if not getattr(args, "no_locale_config", False):
+        msk = manifest_min_sdk(args.proj)
+        locales = existing_locales(res)
+        if msk is not None and msk < 33:
+            print(f"       localeConfig: skipped (minSdkVersion={msk}, needs 33+)")
+        else:
+            cfg = write_locale_config(args.proj, locales)
+            for c in cfg:
+                print(f"       localeConfig: {c}")
     return 0
 
 
@@ -907,12 +1020,61 @@ def scan_project(proj, args):
     print(f"  supportsRtl    : {'yes' if rtl_on else 'NO — run `aqlab rtl`'}")
     print(f"  translatable   : {sum(1 for e in entries if e.translatable)}")
     print(f"  legacy L/R     : {lefts} attribute(s) still left/right — run `aqlab rtl`")
+    vec = text_like_vectors(proj)
+    if vec:
+        print(f"  text vectors   : {len(vec)} — Latin glyphs baked into geometry, check by eye")
+        for pth, n, w, h in vec:
+            print(f"                   {pth}  ({n} paths, {w}x{h}dp)")
     print(f"  arabic res     : {'yes (' + ', '.join(ar_dirs) + ')' if ar_dirs else 'none — run `aqlab scaffold`'}")
     if args.json:
         print(json.dumps({"locales": loc, "supportsRtl": rtl_on,
                           "translatable": sum(1 for e in entries if e.translatable),
                           "legacyLTR": lefts, "arabic": bool(ar_dirs)}, ensure_ascii=False))
     return 0
+
+
+def text_like_vectors(proj):
+    """Vector drawables that probably carry baked-in Latin glyphs.
+
+    A heuristic, so every signal has to agree before anything is reported — the
+    cost of a false positive is that the user learns to ignore the warning,
+    which is worse than not having it.
+
+    Three conditions, all required:
+      1. it is a `<vector>`, not a `<shape>`/`<selector>` (a badge background is
+         not a badge with text in it, however the file is named)
+      2. it does not already set `android:autoMirrored="true"` — a vector that
+         mirrors itself is handled, and there is nothing to warn about
+      3. its geometry looks like lettering: many short filled paths, not one or
+         two large icon shapes
+
+    Returns [(path, path_count, width, height)] relative to the project.
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return []
+    out = []
+    # Lettering is many separate contours; an icon is a handful. 12 is above
+    # every Material icon in a real APK (measured: 2 paths each) and below what
+    # even a short wordmark needs.
+    MIN_PATHS = 12
+    for f in sorted(res.glob("drawable*/*.xml")):
+        try:
+            txt = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "<vector" not in txt:
+            continue
+        if "autoMirrored" in txt and 'autoMirrored="true"' in txt:
+            continue
+        n = txt.count("<path")
+        if n < MIN_PATHS:
+            continue
+        w = re.search(r'android:width="([0-9.]+)dip"', txt)
+        h = re.search(r'android:height="([0-9.]+)dip"', txt)
+        out.append((f.relative_to(proj).as_posix(), n,
+                    w.group(1) if w else "?", h.group(1) if h else "?"))
+    return out
 
 
 def count_legacy_attrs(proj):
@@ -1089,6 +1251,13 @@ def cmd_lint(args):
                 add("warn", label, f"{', '.join(qs)} carry identical text — "
                                    "the plural forms are not actually pluralised")
 
+    # Baked-in lettering in vector geometry: `lint` cannot fix it and a
+    # heuristic must never fail a build, so it is a warning with the path so the
+    # user can look at the drawing itself.
+    for pth, n, w, h in text_like_vectors(proj):
+        add("warn", pth, f"{n} paths at {w}x{h}dp — looks like lettering baked into "
+                         f"geometry; it will not mirror with the UI, check it by eye")
+
     print(f"[FINDING] lint res/values-{args.locale}: {covered}/{len(src)} translated ({cov:.1f}%)")
     for lvl, key, msg in issues:
         if lvl == "info" and not args.verbose:
@@ -1186,6 +1355,8 @@ def build_parser():
     s.add_argument("--locale", default="ar")
     s.add_argument("--tsv", help="pre-seed with an existing translation table")
     s.add_argument("--force", action="store_true", help="overwrite an existing values-<locale>")
+    s.add_argument("--no-locale-config", action="store_true", dest="no_locale_config",
+                   help="skip res/xml/locales_config.xml and the manifest attribute")
     common(s)
     s.set_defaults(func=cmd_scaffold)
 

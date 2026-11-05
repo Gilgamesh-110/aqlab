@@ -7,9 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- plural-rule validation for the six Arabic forms (`zero/one/two/few/many/other`)
-- `android:localeConfig` scaffolding for the Android 13+ per-app language picker
-- vector-drawable mirroring warnings
+- `--dry-run` for every writing command
+- coverage report per file rather than one number
+- RTL beyond Arabic (`he`, `fa`, `ur`)
+
+## [0.1.11] — 2026-11-06
+
+The three open issues, each verified against a real APK and mutated to prove
+its test fails when the code is removed.
+
+### Added
+- **`scaffold` writes `res/xml/locales_config.xml`** and adds
+  `android:localeConfig` to `<application>`, so Android 13+ shows the app in the
+  per-app language picker. Verified with `aapt2 compile` and `aapt2 link` — a
+  wrong resource name fails at link time, not at write time.
+
+  Qualifier folders (`values-sw600dp`, `values-night`) are excluded; below
+  `minSdkVersion 33` the run says `skipped (… needs 33+)` and writes nothing;
+  `--no-locale-config` opts out. An app that already declares its own config is
+  left alone and told so — writing ours would be a dead resource, and rewriting
+  theirs would break a file the tool knows nothing about.
+
+- **`lint` and `scan` report vector drawables that look like lettering.** A
+  Latin wordmark baked into `<path>` geometry cannot mirror with the UI. Three
+  conditions must all hold: it is a `<vector>` (not a `<shape>` or a
+  `<layer-list>`), it does not already set `autoMirrored="true"`, and it has 12+
+  paths.
+
+  The threshold comes from measurement, not taste: 215 drawables in a real APK,
+  86 of them vectors, **every one 2 paths**. A name-based rule would have flagged
+  `bg_elo_badge.xml` (a `<shape>` background) and
+  `abc_ic_arrow_drop_right_black_24dp.xml` (already auto-mirrored) — the same
+  mistake the bidi rule made, and a user who is warned about correct files stops
+  reading the warnings.
+
+### Already satisfied, closed
+- **Plural category validation.** `lint` has reported missing Arabic quantities
+  per `<plurals>` block and `scaffold` has emitted all six stubs since 0.1.4;
+  the issue was opened against behaviour that had already shipped. Verified and
+  closed with the exact cases it asked for.
+
+### Fixed
+- **`scaffold --force` deleted four of the six Arabic plural categories.**
+  Arabic needs `zero/one/two/few/many/other`; an English source declares only
+  `one` and `other`, so the other four exist only in `values-ar`. Output was
+  built by iterating the *source* entries, so they were dropped on every forced
+  run — a real locale went from **54 quantities to 18**. `.bak` kept a copy but
+  the run still reported success. Existing categories are now carried through.
+
+- `lint --help` still advertised "BiDi hazards", which 0.1.8 removed. The first
+  thing a new user reads disagreed with the README.
 
 ## [0.1.10] — 2026-11-05
 

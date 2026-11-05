@@ -170,9 +170,9 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `scan <apk\|dir>` | read-only report: locales, `supportsRtl`, remaining `left/right`, coverage. `--json` for tooling. |
 | `decode <apk>` | unpack an APK into an editable project. Skips `smali/` by default — see below. |
 | `rtl <dir>` | set `android:supportsRtl` and migrate `left/right` → `start/end` across `res/**`. `--dry-run` to preview. |
-| `scaffold <dir>` | create `res/values-ar/` and a `values-ar.tsv` translation table. Every `values/*.xml` is read, not just `strings.xml`. |
+| `scaffold <dir>` | create `res/values-ar/`, a `values-ar.tsv` translation table, and (API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. Every `values/*.xml` is read, not just `strings.xml`. |
 | `apply <dir> --tsv` | import a translated table back into `values-ar/`, each entry into the file its source came from |
-| `lint <dir>` | bidi hazards, escaping bugs, format-specifier drift, Arabic plural structure, coverage. Non-zero exit on errors. |
+| `lint <dir>` | escaping bugs, format-specifier drift, Arabic plural structure, coverage, text-like vectors. Non-zero exit on errors. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | the whole pipeline |
 
@@ -275,7 +275,52 @@ linter will guess at.
 | leading/trailing space mismatch | warn |
 | `few` / `many` / `other` carrying identical text | warn |
 | an Arabic `<plurals>` missing `zero` or `two` | warn |
+| a vector drawable that looks like lettering | warn |
 | mixed Arabic + Latin in one string | info |
+
+### Vector drawables with baked-in text
+
+A Latin wordmark drawn as `<path>` geometry cannot mirror with the UI — the rest
+of the screen flips and the logo stays pointing the wrong way. `lint` and `scan`
+report those, and never touch the drawing.
+
+Three conditions must all hold, because a warning about a correct file teaches
+the user to ignore warnings:
+
+1. it is a `<vector>` — not a `<shape>` or a `<layer-list>`, which are
+   backgrounds whatever they are named
+2. it does not set `android:autoMirrored="true"` — that vector mirrors itself
+3. it has 12 or more paths — lettering is many separate contours, an icon is a
+   handful
+
+The threshold is measured, not guessed: in one real APK of 215 drawables, 86 are
+vectors and **every one of them is 2 paths**. A rule keyed on filenames would
+have flagged `bg_elo_badge.xml` (a `<shape>` background) and
+`abc_ic_arrow_drop_right_black_24dp.xml` (already auto-mirrored).
+
+```
+[WARN] res/drawable/logo_wordmark.xml: 20 paths at 120.0x32.0dp — looks like
+       lettering baked into geometry; it will not mirror with the UI, check it by eye
+```
+
+### The per-app language picker (Android 13+)
+
+`scaffold` writes `res/xml/locales_config.xml` listing every `values-*` language
+folder and points `android:localeConfig` at it, so the app appears in the system
+per-app language picker. Without it a user on an English phone cannot switch
+just this app to Arabic.
+
+```xml
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="ar"/>
+    <locale android:name="fr"/>
+</locale-config>
+```
+
+It is skipped below `minSdkVersion 33` (the API did not exist), disabled entirely
+by `--no-locale-config`, and left alone when the app already declares its own
+config — the run tells you which attribute it found instead. Qualifier folders
+(`values-sw600dp`, `values-night`) are not languages and are excluded.
 
 Exit code is non-zero on errors, so it drops straight into CI.
 

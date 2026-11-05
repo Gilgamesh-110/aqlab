@@ -156,9 +156,9 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `scan <apk\|dir>` | تقرير للقراءة فقط: اللغات، `supportsRtl`، عدد `left/right` الباقية، نسبة التغطية. `--json` للأدوات. |
 | `decode <apk>` | يفك الـAPK لمشروع قابل للتعديل. يتخطّى `smali/` افتراضياً — التفاصيل تحت. |
 | `rtl <dir>` | يضبط `android:supportsRtl` ويحوّل `left/right` → `start/end` بكل `res/**`. `--dry-run` للمعاينة. |
-| `scaffold <dir>` | ينشئ `res/values-ar/` وجدول ترجمة `values-ar.tsv`. يقرا **كل** `values/*.xml` مو `strings.xml` بس. |
+| `scaffold <dir>` | ينشئ `res/values-ar/` وجدول ترجمة `values-ar.tsv`، و(API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. يقرا **كل** `values/*.xml` مو `strings.xml` بس. |
 | `apply <dir> --tsv` | يستورد الجدول المترجم إلى `values-ar/`، وكل إدخال لملفه الأصلي |
-| `lint <dir>` | مخاطر bidi، أخطاء التهريب، اختلاف الـformat specifiers، **بنية صيغ الجمع العربية**، التغطية. كود خروج غير صفري عند الأخطاء. |
+| `lint <dir>` | أخطاء التهريب، اختلاف الـformat specifiers، **بنية صيغ الجمع العربية**، التغطية، الـvector اللي يشبه نص. كود خروج غير صفري عند الأخطاء. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | السلسلة كاملة |
 
@@ -251,7 +251,49 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | فرق بالمسافات بالبداية أو النهاية | warn |
 | `few` / `many` / `other` بنفس النص بالضبط | warn |
 | `<plurals>` عربية ناقصة `zero` أو `two` | warn |
+| vector drawable يشبه نص | warn |
 | خلط عربي + لاتيني بنفس النص | info |
+
+### الـvectors اللي بيها نص مرسوم
+
+شعار لاتيني مرسوم بـ`<path>` ما ينقلب مع الواجهة — الشاشة كلها تنقلب والشعار
+يضل مقلوب. `lint` و`scan` يبلّغون عنه، وما يلمسون الرسم أبداً.
+
+ثلاث شروط لازم تتحقق كلها، لأن التحذير على ملف سليم يعلّم المستخدم يتجاهل
+التحذيرات:
+
+1. هو `<vector>` — مو `<shape>` ولا `<layer-list>`، هذول خلفيات مهما كان اسمهم
+2. ما عنده `android:autoMirrored="true"` — ذاك الـvector ينقلب بنفسه
+3. عنده 12 مسار أو أكثر — النص مسارات منفصلة كثيرة، والأيقونة كم مسار
+
+العتبة مقاسة مو مخمّنة: بـAPK حقيقي فيه 215 drawable، منهم 86 vector،
+**كل واحد منهم مسارين بس**. قاعدة على أساس الاسم كانت راح تتهم
+`bg_elo_badge.xml` (خلفية `<shape>`) و`abc_ic_arrow_drop_right_black_24dp.xml`
+(أصلاً `autoMirrored`).
+
+```
+[WARN] res/drawable/logo_wordmark.xml: 20 paths at 120.0x32.0dp — looks like
+       lettering baked into geometry; it will not mirror with the UI, check it by eye
+```
+
+### منتقي لغة التطبيق (أندرويد 13+)
+
+`scaffold` يكتب `res/xml/locales_config.xml` ويعدّد كل مجلدات `values-*` اللغوية،
+ويوجّه `android:localeConfig` عليه، فيطلع التطبيق بمنتقي لغة التطبيق بالنظام.
+بلا هذا، مستخدم جواله إنجليزي ما يقدر يحوّل هذا التطبيق وحده للعربية.
+
+```xml
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="ar"/>
+    <locale android:name="fr"/>
+</locale-config>
+```
+
+ينتخطى إذا `minSdkVersion` أقل من 33 (الـAPI ما كان موجود)، ويتعطّل كلياً
+بـ`--no-locale-config`، وينترك لحاله إذا التطبيق أصلاً يعلن config خاص بيه —
+التشغيل يخبرك أي attribute لكاه. مجلدات الـqualifiers (`values-sw600dp`،
+`values-night`) مو لغات وتنستثنى.
+
 
 كود الخروج غير صفري عند الأخطاء، فينزل مباشرة بالـCI.
 
