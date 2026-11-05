@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `android:localeConfig` scaffolding for the Android 13+ per-app language picker
 - vector-drawable mirroring warnings
 
+## [0.1.10] — 2026-11-05
+
+### Fixed
+- **Markup was escaped into text.** `escape_android` escaped every `<`, so a
+  string using `<xliff:g id="name">%1$s</xliff:g>` — the standard way to protect
+  an argument from translation — was written as `&lt;xliff:g …&gt;` and the
+  phone printed the tag instead of substituting the name. `<b>`, `<i>`, `<a
+  href>` were broken the same way. Known Android markup is now kept as markup,
+  any other `<` is still escaped, and `<resources>` gets `xmlns:xliff` when the
+  file uses it.
+
+- **`formatted="false"` and other string attributes were dropped.** `apply`
+  rewrote `<string name="x">` with no attributes, so `formatted="false"`
+  vanished — and a translated `100%` without it is an `aapt2` compile error
+  (`unescaped apostrophe` … `not a valid string`). Attributes are carried
+  through from the source entry.
+
+- **A newline in a translation broke the table.** `write_tsv` escaped newlines
+  in the source column but wrote the translation column raw, so a translation
+  containing a line break split its row in two and the rest of the value was
+  lost on the next read. Both columns are single-line now, and the reader turns
+  `\n` / `\t` back into the characters they stand for.
+
+- **`CITATION.cff` was four releases behind.** It still said `0.1.5` while PyPI
+  served `0.1.9`. Anyone citing the tool cited the wrong version.
+
 ## [0.1.9] — 2026-11-05
 
 ### Fixed

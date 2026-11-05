@@ -199,6 +199,50 @@ def test_apply_does_not_duplicate_plurals(proj, tmp):
     check("no duplicate quantity", len({e.key for e in items}) == 4)
 
 
+def test_markup_survives_apply(tmp):
+    """`<xliff:g>` and `formatted="false"` must come out of apply intact.
+
+    `escape_android` escaped every `<`, so a translator's `<xliff:g id="name">`
+    was written as text and the phone printed the tag instead of the value-
+    protection it provides. `write_strings_xml` dropped the attribute block, so
+    `formatted="false"` vanished — and a translated `100%` without it is a
+    compile error.
+    """
+    root = Path(tmp) / "markup"
+    res = root / "res"
+    for d in ("values", "values-ar"):
+        (res / d).mkdir(parents=True)
+    (res / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">'
+        '<string name="b" formatted="false">100% guaranteed</string>'
+        '<string name="c">Hello <xliff:g id="name">%1$s</xliff:g></string>'
+        '</resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:supportsRtl="true"/></manifest>',
+        encoding="utf-8")
+    tsv = root / "t.tsv"
+    tsv.write_text("# key\tsource\ttranslation\n"
+                   "b\t100% guaranteed\tمضمون 100%\n"
+                   'c\tHello <xliff:g id="name">%1$s</xliff:g>\t'
+                   'مرحبا <xliff:g id="name">%1$s</xliff:g>\n', encoding="utf-8")
+    rc = A.cmd_apply(argparse.Namespace(proj=str(root), tsv=str(tsv), locale="ar",
+                                       quiet=True))
+    check("markup apply rc", rc == 0)
+    out = (res / "values-ar" / "strings.xml").read_text(encoding="utf-8")
+    check("xliff kept as markup", "<xliff:g" in out and "&lt;xliff" not in out)
+    check("xliff namespace declared", "xmlns:xliff" in out)
+    check("formatted attribute kept", 'formatted="false"' in out)
+    # the file must parse as XML with xliff:g as an element, not as text
+    import xml.etree.ElementTree as ET
+    doc = ET.fromstring(out)
+    g = doc.find('.//{urn:oasis:names:tc:xliff:document:1.2}g')
+    check("xliff:g is an element", g is not None and g.get("id") == "name")
+    check("bold survives too", A.escape_android("<b>hi</b>") == "<b>hi</b>")
+    check("stray < still escaped", A.escape_android("a < b") == "a &lt; b")
+
+
 def test_scaffold_apply(proj, tmp):
     rc = A.cmd_scaffold(argparse.Namespace(proj=str(proj), locale="ar", tsv=None,
                                           force=False, quiet=True))
@@ -710,6 +754,7 @@ def main():
         test_scaffold_apply(proj, tmp)
         test_apply_preserves_existing(proj, tmp)
         test_apply_does_not_duplicate_plurals(proj, tmp)
+        test_markup_survives_apply(tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)

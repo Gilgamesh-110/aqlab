@@ -31,7 +31,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.9"
+__version__ = "0.1.10"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -497,9 +497,36 @@ def find_default_strings(proj):
 # --------------------------------------------------------------------------
 
 
+def _keeps_markup():
+    """Tag names that must survive as markup instead of being escaped to text."""
+    return ("b", "i", "u", "xliff:g", "a", "annotation", "font", "tt", "big", "small",
+            "sup", "sub", "strike", "br")
+
+
 def escape_android(text):
-    """Escape a translated string for a values-ar resource file."""
-    t = text.replace("&", "&amp;").replace("<", "&lt;")
+    """Escape a translated string for a values-ar resource file.
+
+    Markup Android itself understands (`<b>`, `<xliff:g id="…">`, `<a href>`)
+    is kept as markup: escaping it makes the phone print the tag instead of
+    applying it, and a translator's `<xliff:g>` is there to protect an argument
+    from being translated at all.
+    """
+    stash = []
+
+    def hold(m):
+        stash.append(m.group(0))
+        return f"\x00{len(stash) - 1}\x00"
+
+    keep = "|".join(_keeps_markup())
+    t = re.sub(rf"</?(?:{keep})(?:\s[^>]*)?/?>", hold, text)
+    t = re.sub(r"&#(\d+);|&#x([0-9a-fA-F]+);|&(amp|lt|gt|quot|apos);",
+               lambda m: hold(m), t)
+
+    t = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+    # a real newline is a line break in the resource; the XML writer must not
+    # keep it as whitespace, where Android collapses it
+    t = t.replace("\n", "\\n").replace("\t", "\\t")
     t = t.replace("'", "\\'").replace('"', '\\"')
     if t[:1] in ("@", "?"):
         t = "\\" + t
@@ -507,6 +534,8 @@ def escape_android(text):
         lead = " ".join("\\u0020" for _ in re.match(r"\s*", t).group(0))
         trail = " ".join("\\u0020" for _ in re.search(r"\s*$", t).group(0))
         t = lead + t.strip() + trail
+    for i, s in enumerate(stash):
+        t = t.replace(f"\x00{i}\x00", s)
     return t
 
 
@@ -632,7 +661,11 @@ def cmd_rtl(args):
 def translations_from_tsv(path):
     """Read translation rows. Accepts 2-col `key<TAB>translation` (the format
     already used by hand-rolled workflows) and 3-col `key<TAB>source<TAB>translation`.
-    Blank values and `#` comments are skipped."""
+    Blank values and `#` comments are skipped.
+
+    A `\\n` written in a cell means a newline in the resource — the table is
+    line-based, so the escape is the only way to carry one.
+    """
     out = {}
     for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
@@ -641,9 +674,23 @@ def translations_from_tsv(path):
         if len(parts) < 2:
             continue
         key = parts[0].strip()
-        val = parts[-1]
+        val = parts[-1].replace("\\n", "\n").replace("\\t", "\t")
         if key and val.strip():
             out[key] = val
+    return out
+
+
+def _attr_pairs(attrs):
+    """`a="1" b="2"` -> [("a","1"), ("b","2")], keeping the source's own values.
+
+    `formatted="false"` must be carried into the translated file unchanged: it
+    tells aapt the value has no format specifiers, and without it a translated
+    `100%` is a compile error. `name` is dropped — the caller writes it.
+    """
+    out = []
+    for m in re.finditer(r'([\w:-]+)\s*=\s*"([^"]*)"', attrs or ""):
+        if m.group(1) != "name":
+            out.append((m.group(1), m.group(2)))
     return out
 
 
@@ -656,13 +703,18 @@ def write_strings_xml(out_dir, pairs, fname="strings.xml"):
              "<resources>"]
     pl = {}
     seen = set()
+    uses_xliff = any("xliff:" in (t or "") for _, t in pairs)
     for e, text in pairs:
         if e.key in seen:
             continue
         seen.add(e.key)
         esc = escape_android(text)
         if e.kind == "string":
-            lines.append(f'    <string name="{e.key}">{esc}</string>')
+            # `formatted="false"` and `translatable="…"` change how aapt reads
+            # the value and whether a build accepts it — a translated `100%`
+            # without `formatted="false"` fails to compile.
+            attrs = "".join(f' {k}="{v}"' for k, v in _attr_pairs(e.attrs))
+            lines.append(f'    <string name="{e.key}"{attrs}>{esc}</string>')
         else:
             name, qty = e.key.split("|", 1)
             pl.setdefault(name, []).append((qty, esc))
@@ -675,16 +727,28 @@ def write_strings_xml(out_dir, pairs, fname="strings.xml"):
             lines.append(f'        <item quantity="{qty}">{esc}</item>')
         lines.append("    </plurals>")
     lines.append("</resources>")
+    if uses_xliff:
+        # <xliff:g> is a namespaced element; without the declaration the file is
+        # not well-formed and aapt2 refuses it.
+        lines[2] = '<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">'
     (out_dir / fname).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write_tsv(path, entries, tsv_map):
-    """key, source, translation — column 1 must be preserved exactly."""
+    """key, source, translation — column 1 must be preserved exactly.
+
+    Every cell is single-line: a literal newline in a cell splits the row in
+    two when the table is read back, so the translation after it is lost. Tabs
+    and newlines are written as the escapes a resource file would use anyway.
+    """
+    def cell(text):
+        return (text or "").replace("\t", " ").replace("\r\n", "\\n") \
+                           .replace("\n", "\\n").replace("\r", "\\n")
+
     rows = ["# aqlab translation table — fill the LAST column, keep column 1 EXACT",
             "# key\tsource\ttranslation"]
     for e in entries:
-        src = e.text.replace("\t", " ").replace("\n", "\\n")
-        rows.append(f"{e.key}\t{src}\t{tsv_map.get(e.key, '')}")
+        rows.append(f"{e.key}\t{cell(e.text)}\t{cell(tsv_map.get(e.key, ''))}")
     Path(path).write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
