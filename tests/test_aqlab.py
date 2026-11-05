@@ -439,6 +439,12 @@ def test_forced_scaffold_keeps_six_plural_forms(proj, tmp):
     check("two kept", got.get("files|two") == "ملفان")
     check("few kept", got.get("files|few") == "%d ملفات")
     check("many kept", got.get("files|many") == "%d ملفاً")
+    # a non-resource file under res/ makes `aapt2 compile --dir res` fail with
+    # "invalid file path" — verified. The backup must live outside.
+    check("nothing non-resource under res/",
+          not list(res.rglob("*.bak")), str(list(res.rglob("*.bak"))))
+    check("backup kept outside res/",
+          (root / "aqlab-backup-ar" / "strings.xml").exists())
 
 
 def test_scaffold_apply(proj, tmp):

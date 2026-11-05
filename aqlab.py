@@ -884,15 +884,22 @@ def cmd_scaffold(args):
 
     # `--force` rewrites the locale folder from the table. If the folder already
     # held translations the table does not, they are about to disappear: keep a
-    # copy beside them and say how many, so a forced scaffold is never silent.
+    # copy and say how many, so a forced scaffold is never silent.
+    #
+    # The copy goes OUTSIDE res/. A file that is not a resource under res/ makes
+    # `aapt2 compile --dir res` fail with "invalid file path", which is the same
+    # trap the .tsv used to fall into — verified: a single .bak in values-ar
+    # breaks the build.
     if clobber:
         had = existing_translations(res, args.locale)
         losing = [k for k, v in had.items() if v.strip() and k not in merged]
+        backup_dir = Path(args.proj) / f"aqlab-backup-{args.locale}"
         for f in clobber:
-            shutil.copy2(out_dir / f, out_dir / (f + ".bak"))
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(out_dir / f, backup_dir / f)
         if losing:
             print(f"[WARN] {len(losing)} existing translation(s) not in the table — "
-                  f"keeping them as {out_dir}/*.bak")
+                  f"keeping them in {backup_dir}/")
 
     by_file = {}
     for e, t in have:
