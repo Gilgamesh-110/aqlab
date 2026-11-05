@@ -57,7 +57,7 @@ python aqlab.py lint  examples/demo-project
 [DONE] 4 file(s) updated
 [DONE] 12 translation(s) -> examples/demo-project/res/values-ar/strings.xml
 [FINDING] lint res/values-ar: 12/12 translated (100.0%)
-  [ERROR] plurals/selected_count: missing Arabic quantities: few (3-10), many (11-99) — those counts fall back to `other`
+  [ERROR] plurals/selected_count: missing quantities: few (3-10), many (11-99) — those counts fall back to `other`
   [WARN] plurals/selected_count: no zero (0), two (2) form — those counts use `other`
 [FAIL] 1 error(s), 1 warning(s)
 ```
@@ -170,9 +170,9 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `scan <apk\|dir>` | read-only report: locales, `supportsRtl`, remaining `left/right`, coverage. `--json` for tooling. |
 | `decode <apk>` | unpack an APK into an editable project. Skips `smali/` by default — see below. |
 | `rtl <dir>` | set `android:supportsRtl` and migrate `left/right` → `start/end` across `res/**`. `--dry-run` to preview. |
-| `scaffold <dir>` | create `res/values-ar/`, a `values-ar.tsv` translation table, and (API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. Every `values/*.xml` is read, not just `strings.xml`. |
-| `apply <dir> --tsv` | import a translated table back into `values-ar/`, each entry into the file its source came from |
-| `lint <dir>` | escaping bugs, format-specifier drift, Arabic plural structure, coverage, text-like vectors. Non-zero exit on errors. |
+| `scaffold <dir>` | create `res/values-<locale>/`, a translation TSV, and (API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. Every `values/*.xml` is read, not just `strings.xml`. `--dry-run` to preview. |
+| `apply <dir> --tsv` | import a translated table back into the locale folder, each entry into the file its source came from. `--dry-run` to preview. |
+| `lint <dir>` | escaping bugs, format-specifier drift, plural structure, coverage (overall and per file), text-like vectors. Non-zero exit on errors; `--fail-under` / `--fail-under-file` gate CI on coverage. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | the whole pipeline |
 
@@ -254,7 +254,7 @@ The check is gone. What `lint` reports now is what it can demonstrate:
   [ERROR] discount: bare `%` — must be `%%` or a format specifier, aapt will reject it
   [ERROR] welcome: format specifiers differ: source ['%1$s'] vs arabic ['%s']
   [ERROR] note: unescaped apostrophe — use \' inside Android string resources
-  [ERROR] plurals/selected_count: missing Arabic quantities: few (3-10), many (11-99)
+  [ERROR] plurals/selected_count: missing quantities: few (3-10), many (11-99)
 [FAIL] 4 error(s), 1 warning(s)
 ```
 
@@ -322,6 +322,61 @@ by `--no-locale-config`, and left alone when the app already declares its own
 config — the run tells you which attribute it found instead. Qualifier folders
 (`values-sw600dp`, `values-night`) are not languages and are excluded.
 
+### Other RTL languages
+
+The plural tables and the `supportsRtl` machinery are not Arabic-specific. CLDR
+assigns categories per language, and they are genuinely different:
+
+| locale | categories | `many` means |
+|---|---|---|
+| `ar` | `zero one two few many other` | 11–99 |
+| `he` | `one two many other` | 20, 30, 40 … |
+| `fa` | `one other` | — |
+| `ur` | `one other` | — |
+
+```bash
+aqlab scaffold proj --locale he
+aqlab lint proj --locale he
+```
+
+Asking Hebrew for a `few` form, or Persian for `zero`, would leave a form on the
+translator that the language never uses — so the tables come from
+[CLDR](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html),
+not from Arabic by analogy.
+
+### Trying a command without running it
+
+Every command that writes takes `--dry-run`, and prints the exact plan:
+
+```
+$ aqlab apply proj --tsv ar.tsv --dry-run
+[DRY] would write 3 file(s) from 1424 translation(s)
+  would overwrite: proj/res/values-ar/strings.xml (1370 entries)
+  would overwrite: proj/res/values-ar/plurals.xml (54 entries)
+  would create: proj/values-ar.tsv (1462 entries)
+```
+
+Writes are collected and applied together, so a failure part-way through leaves
+the locale folder as it was rather than half-rewritten.
+
+### Coverage as a gate
+
+`lint` reports coverage per source file, because one number hides the file that
+is behind — 88% overall can be `strings.xml` at 99% and `plurals.xml` at 60%:
+
+```
+[FINDING] lint res/values-ar: 1388/1426 translated (97.3%)
+            strings.xml          1370/1408   97.3%  <- weakest
+            plurals.xml          18/18  100.0%
+```
+
+Gate it in CI:
+
+```bash
+aqlab lint proj --fail-under 95            # overall
+aqlab lint proj --fail-under-file 90       # any single file
+```
+
 Exit code is non-zero on errors, so it drops straight into CI.
 
 ## The other part nobody does: Arabic has six plurals, not two
@@ -348,7 +403,7 @@ build says a word.** And then every count from 2 upward falls through to `other`
 `aqlab lint` reads `<plurals>` as a structure and reports it:
 
 ```
-[ERROR] plurals/n_items: missing Arabic quantities: few (3-10), many (11-99)
+[ERROR] plurals/n_items: missing quantities: few (3-10), many (11-99)
         — those counts fall back to `other`
 [WARN]  plurals/n_items: no zero (0), two (2) form — those counts use `other`
 [WARN]  plurals/n_items: few, many, other carry identical text

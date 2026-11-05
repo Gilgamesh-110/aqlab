@@ -31,7 +31,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.12"
+__version__ = "0.1.13"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -342,6 +342,10 @@ RE_CDATA = re.compile(r"^\s*<!\[CDATA\[(.*?)\]\]>\s*$", re.DOTALL)
 # The two that cover the most counts — `few` (3-10) and `many` (11-99) — are
 # exactly the two an English source cannot supply, so an Arabic <plurals> copied
 # from English builds fine and reads wrong for almost every number.
+def _base(locale):
+    return (locale or "").replace("_", "-").split("-")[0].lower()
+
+
 ARABIC_PLURAL_CATEGORIES = ("zero", "one", "two", "few", "many", "other")
 PLURAL_RANGE = {
     "zero": "0",
@@ -351,13 +355,73 @@ PLURAL_RANGE = {
     "many": "11-99",
     "other": "100, 101, 102 …",
 }
-# `other` covers every count the named categories do not, and few/many carry the
-# majority of real counts, so those three are errors. Verified with aapt2 that a
-# translation lacking `other` still compiles and links — this is not a build
-# guard, it is the finding that no Arabic value exists for those counts.
-# zero and two are optional in practice.
-PLURAL_REQUIRED = ("other", "few", "many")
-PLURAL_OPTIONAL = ("zero", "two")
+# `many` means different counts per language — Arabic 11-99, Hebrew 20/30/40… —
+# so the hint in a message has to come from the locale, not from Arabic.
+PLURAL_RANGE_BY_LOCALE = {
+    "ar": {"zero": "0", "one": "1", "two": "2", "few": "3-10", "many": "11-99",
+           "other": "100, 101, 102 …"},
+    "he": {"one": "1", "two": "2", "many": "20, 30, 40 …", "other": "everything else"},
+    "fa": {"one": "1", "other": "everything else"},
+    "ur": {"one": "1", "other": "everything else"},
+}
+
+
+def plural_range(locale, cat):
+    """Count range hint for a category, in the target locale's own terms."""
+    return PLURAL_RANGE_BY_LOCALE.get(_base(locale), PLURAL_RANGE).get(cat, PLURAL_RANGE.get(cat, "?"))
+
+# CLDR plural categories per locale, in CLDR order. Verified against
+# unicode.org/cldr/charts/47/supplemental/language_plural_rules.html:
+#   ar  zero one two few many other
+#   he  one two many other        (no zero, no few)
+#   fa  one other
+#   ur  one other
+# Guessing here would repeat the bidi mistake — a category the language does not
+# use would be demanded of the translator forever.
+PLURAL_CATEGORIES = {
+    "ar": ("zero", "one", "two", "few", "many", "other"),
+    "he": ("one", "two", "many", "other"),
+    "fa": ("one", "other"),
+    "ur": ("one", "other"),
+}
+# The categories that carry the most counts, so missing ones are errors: for
+# Arabic `few` (3-10) and `many` (11-99); for Hebrew `many` (20, 30, …). `other`
+# always covers everything the named categories do not, so it is always required.
+PLURAL_REQUIRED = {
+    "ar": ("other", "few", "many"),
+    "he": ("other", "many"),
+    "fa": ("other",),
+    "ur": ("other",),
+}
+PLURAL_OPTIONAL = {
+    "ar": ("zero", "two"),
+    "he": ("one", "two"),
+    "fa": ("one",),
+    "ur": ("one",),
+}
+# Languages that read right-to-left, so `supportsRtl` and start/end matter.
+RTL_LOCALES = ("ar", "he", "fa", "ur", "yi", "dv", "ps", "sd", "ug", "ckb")
+
+
+def plural_categories(locale):
+    """CLDR categories for a locale, empty when it has no distinct plurals.
+
+    A base tag (`ar-rSA`, `he`) resolves on the language subtag; `pt-BR` style
+    only matters for languages that differ by region, and none of the RTL ones do.
+    """
+    return PLURAL_CATEGORIES.get(_base(locale), ())
+
+
+def plural_required(locale):
+    return PLURAL_REQUIRED.get(_base(locale), ())
+
+
+def plural_optional(locale):
+    return PLURAL_OPTIONAL.get(_base(locale), ())
+
+
+def is_rtl(locale):
+    return _base(locale) in RTL_LOCALES
 
 
 class Entry:
@@ -419,7 +483,8 @@ def plural_rows_for(entries, locale):
     the source has it and left blank where it cannot — which is also the shape the
     finished file will take.
     """
-    if locale != "ar":
+    cats = plural_categories(locale)
+    if not cats:
         return entries
     by_name = {}
     for e in entries:
@@ -437,7 +502,7 @@ def plural_rows_for(entries, locale):
             continue
         emitted.add(name)
         got = by_name[name]
-        for cat in ARABIC_PLURAL_CATEGORIES:
+        for cat in cats:
             out.append(got.get(cat)
                        or Entry(f"{name}|{cat}", "plural", e.attrs, "", True, e.src))
     return out
@@ -694,10 +759,13 @@ def _attr_pairs(attrs):
     return out
 
 
-def write_strings_xml(out_dir, pairs, fname="strings.xml"):
-    """Emit res/values-<locale>/<fname> from (entry, translated_text) pairs."""
+def write_strings_xml(out_dir, pairs, fname="strings.xml", sink=None, locale="ar"):
+    """Emit res/values-<locale>/<fname> from (entry, translated_text) pairs.
+
+    `sink`, when given, records the write instead of performing it — that is how
+    `--dry-run` works without a second copy of every code path.
+    """
     out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     lines = ['<?xml version="1.0" encoding="utf-8"?>',
              f"<!-- generated by aqlab {__version__} -->",
              "<resources>"]
@@ -718,7 +786,12 @@ def write_strings_xml(out_dir, pairs, fname="strings.xml"):
         else:
             name, qty = e.key.split("|", 1)
             pl.setdefault(name, []).append((qty, esc))
-    order = {q: i for i, q in enumerate(ARABIC_PLURAL_CATEGORIES)}
+    # CLDR order for the folder's own locale, so a generated file reads like a
+    # hand-written one. Falls back to the wider order for a locale we do not
+    # table — the categories present still sort consistently.
+    cats = plural_categories(locale)
+    order = ({q: i for i, q in enumerate(cats)} if cats
+             else {q: i for i, q in enumerate(ARABIC_PLURAL_CATEGORIES)})
     for name, items in pl.items():
         # canonical CLDR order, so a generated file reads like a hand-written one
         items.sort(key=lambda t: order.get(t[0], len(order)))
@@ -731,10 +804,16 @@ def write_strings_xml(out_dir, pairs, fname="strings.xml"):
         # <xliff:g> is a namespaced element; without the declaration the file is
         # not well-formed and aapt2 refuses it.
         lines[2] = '<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">'
-    (out_dir / fname).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path = out_dir / fname
+    body = "\n".join(lines) + "\n"
+    if sink is not None:
+        sink.add(path, body, sum(1 for e, _ in pairs))
+    else:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
 
 
-def write_tsv(path, entries, tsv_map):
+def write_tsv(path, entries, tsv_map, sink=None):
     """key, source, translation — column 1 must be preserved exactly.
 
     Every cell is single-line: a literal newline in a cell splits the row in
@@ -749,7 +828,97 @@ def write_tsv(path, entries, tsv_map):
             "# key\tsource\ttranslation"]
     for e in entries:
         rows.append(f"{e.key}\t{cell(e.text)}\t{cell(tsv_map.get(e.key, ''))}")
-    Path(path).write_text("\n".join(rows) + "\n", encoding="utf-8")
+    body = "\n".join(rows) + "\n"
+    if sink is not None:
+        sink.add(Path(path), body, len(entries))
+    else:
+        Path(path).write_text(body, encoding="utf-8")
+
+
+class Writes:
+    """Collects every file a command would write, then applies them at once.
+
+    Two reasons it is a list and not a `dry` boolean threaded through: `--dry-run`
+    can print an exact plan, and a failure halfway through `apply` no longer
+    leaves the locale folder half-rewritten — the writes land together or not at
+    all.
+
+    Paths that already exist and would change are marked, so a dry run says
+    "would overwrite" rather than "would create".
+    """
+
+    def __init__(self, dry=False):
+        self.dry = dry
+        self.items = []          # [(path, body, count)]
+
+    def add(self, path, body, count=0):
+        self.items.append((Path(path), body, count))
+
+    def conflicted(self):
+        return [(p, b, n) for p, b, n in self.items
+                if p.exists() and p.read_text(encoding="utf-8", errors="replace") != b]
+
+    def unchanged(self):
+        return [(p, b, n) for p, b, n in self.items
+                if p.exists() and p.read_text(encoding="utf-8", errors="replace") == b]
+
+    def commit(self):
+        """Write everything. Returns the paths actually written."""
+        if self.dry:
+            return []
+        done = []
+        for path, body, _ in self.items:
+            if path.exists() and path.read_text(encoding="utf-8", errors="replace") == body:
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+            done.append(path)
+        return done
+
+    def report(self, verbose=False):
+        """Print what happened (or would), relative to nothing — callers add that."""
+        if self.dry:
+            for path, _, n in self.items:
+                mark = "would overwrite" if path.exists() else "would create"
+                extra = f" ({n} entries)" if n else ""
+                print(f"  {mark}: {path}{extra}")
+            if not self.items:
+                print("  nothing to write")
+            return
+        changed = self.commit()
+        for path in changed:
+            print(f"  wrote: {path}")
+
+
+def non_resource_files(res):
+    """Files under `res/` that aapt2 will reject with "invalid file path".
+
+    `aapt2 compile --dir res` accepts only images, XML resources and the folder
+    names it knows. A stray `.bak`, `.tsv` or `.orig` inside `res/` fails the
+    whole build — this bit us twice, so the commands check before they finish
+    rather than leaving it for the user to discover.
+    """
+    res = Path(res)
+    if not res.is_dir():
+        return []
+    ok_dir = re.compile(r"^(?:values|drawable|mipmap|layout|xml|menu|anim|animator|"
+                        r"raw|color|font|navigation|transition|interpolator)"
+                        r"(?:-[A-Za-z0-9+_-]+)*$")
+    ok_ext = {".xml", ".png", ".jpg", ".jpeg", ".webp", ".9.png", ".gif",
+              ".ttf", ".otf", ".ttc", ".mp3", ".ogg", ".wav", ".mp4", ".json",
+              ".txt", ".html", ".css", ".js"}
+    bad = []
+    for d in res.rglob("*"):
+        if not d.is_file():
+            continue
+        rel = d.relative_to(res)
+        top = rel.parts[0]
+        if not ok_dir.match(top):
+            bad.append(d)
+            continue
+        if d.suffix.lower() not in ok_ext and not d.name.endswith(".9.png"):
+            bad.append(d)
+    return bad
 
 
 def existing_locales(res):
@@ -879,7 +1048,7 @@ def cmd_scaffold(args):
             continue
         name, sep, qty = key.partition("|")
         anchor = pl_home.get(name) if sep else None
-        if anchor and qty in ARABIC_PLURAL_CATEGORIES:
+        if anchor and qty in plural_categories(args.locale):
             have.append((Entry(key, "plural", anchor.attrs, "", True, anchor.src), text))
 
     # `--force` rewrites the locale folder from the table. If the folder already
@@ -890,7 +1059,7 @@ def cmd_scaffold(args):
     # `aapt2 compile --dir res` fail with "invalid file path", which is the same
     # trap the .tsv used to fall into — verified: a single .bak in values-ar
     # breaks the build.
-    if clobber:
+    if clobber and not getattr(args, "dry_run", False):
         had = existing_translations(res, args.locale)
         losing = [k for k, v in had.items() if v.strip() and k not in merged]
         backup_dir = Path(args.proj) / f"aqlab-backup-{args.locale}"
@@ -901,24 +1070,40 @@ def cmd_scaffold(args):
             print(f"[WARN] {len(losing)} existing translation(s) not in the table — "
                   f"keeping them in {backup_dir}/")
 
+    sink = Writes(dry=getattr(args, "dry_run", False))
     by_file = {}
     for e, t in have:
         by_file.setdefault(e.src or "strings.xml", []).append((e, t))
-    write_strings_xml(out_dir, by_file.get("strings.xml", []))  # always the entry point
+    write_strings_xml(out_dir, by_file.get("strings.xml", []), sink=sink,
+                      locale=args.locale)
     for fname, group in by_file.items():
         if fname != "strings.xml":
-            write_strings_xml(out_dir, group, fname)
+            write_strings_xml(out_dir, group, fname, sink=sink, locale=args.locale)
     rows = plural_rows_for(entries, args.locale)
     # The table stays OUT of res/: it is not a resource, and anything that
     # compiles the tree directly (aapt2 compile --dir res) fails on it with
     # "invalid file path". apktool happens to skip it, which is why this never
     # showed up until now.
     tsv = Path(args.proj) / f"values-{args.locale}.tsv"
-    write_tsv(tsv, rows, merged)
+    write_tsv(tsv, rows, merged, sink=sink)
+
+    if sink.dry:
+        print(f"[DRY] would scaffold {len(entries)} entries -> {out_dir}")
+        print(f"      translated: {len(have)}   pending: {len(rows) - len(have)}")
+        sink.report()
+        return 0
+    sink.commit()
     print(f"[DONE] scaffolded {len(entries)} entries from {len(groups)} file(s) -> {out_dir}")
     print(f"       translated: {len(have)}   pending: {len(rows) - len(have)}")
     print(f"       translate:  {tsv}")
     print(f"       then:       aqlab apply {args.proj} --tsv {tsv}")
+
+    stray = non_resource_files(res)
+    if stray:
+        print(f"[WARN] {len(stray)} file(s) under res/ will break the build — "
+              f"aapt2 rejects anything that is not a resource:")
+        for p in stray[:5]:
+            print(f"         {p.relative_to(args.proj).as_posix()}")
 
     # The per-app language picker is API 33+. Below that the config is inert, so
     # writing it would only add a file to explain — say why instead of failing.
@@ -958,7 +1143,7 @@ def cmd_apply(args):
             continue
         name, sep, qty = key.partition("|")
         anchor = home.get(name) if sep else None
-        if anchor and qty in ARABIC_PLURAL_CATEGORIES:
+        if anchor and qty in plural_categories(args.locale):
             pairs.append((Entry(key, "plural", anchor.attrs, "", True, anchor.src), text))
 
     if not pairs:
@@ -982,7 +1167,7 @@ def cmd_apply(args):
             continue
         name, sep, qty = key.partition("|")
         anchor = home.get(name) if sep else None
-        if anchor and qty in ARABIC_PLURAL_CATEGORIES:
+        if anchor and qty in plural_categories(args.locale):
             pairs.append((Entry(key, "plural", anchor.attrs, "", True, anchor.src), text))
             supplied[key] = text
             kept += 1
@@ -991,12 +1176,29 @@ def cmd_apply(args):
     by_file = {}
     for e, t in pairs:
         by_file.setdefault(e.src or "strings.xml", []).append((e, t))
+    sink = Writes(dry=getattr(args, "dry_run", False))
     for fname, group in by_file.items():
-        write_strings_xml(out_dir, group, fname)
+        write_strings_xml(out_dir, group, fname, sink=sink, locale=args.locale)
     write_tsv(Path(args.proj) / f"values-{args.locale}.tsv",
-              plural_rows_for(all_entries, args.locale), {e.key: t for e, t in pairs})
+              plural_rows_for(all_entries, args.locale),
+              {e.key: t for e, t in pairs}, sink=sink)
+
+    if sink.dry:
+        print(f"[DRY] would write {len(sink.items)} file(s) from {len(pairs)} translation(s)")
+        sink.report()
+        return 0
+    sink.commit()
     note = f", {kept} kept from existing {args.locale} translations" if kept else ""
     print(f"[DONE] {len(pairs)} translation(s) -> {out_dir}/{' + '.join(sorted(by_file))}{note}")
+
+    # a stray file under res/ breaks `aapt2 compile --dir res`, and the user only
+    # finds out at build time — say it here, where the mistake was made
+    stray = non_resource_files(res)
+    if stray:
+        print(f"[WARN] {len(stray)} file(s) under res/ will break the build — "
+              f"aapt2 rejects anything that is not a resource:")
+        for p in stray[:5]:
+            print(f"         {p.relative_to(args.proj).as_posix()}")
     return 0
 
 
@@ -1206,6 +1408,15 @@ def cmd_lint(args):
     covered = sum(1 for k in src if k in tr)
     cov = 100.0 * covered / max(len(src), 1)
 
+    # One number hides the file that is actually behind. A locale at 88% overall
+    # can have strings.xml at 99% and plurals.xml at 60%, and the 60% is what a
+    # reader sees on screen. Report per source file, and let CI gate on it.
+    per_file = {}
+    for k, e in src.items():
+        f = e.src or "strings.xml"
+        got, total = per_file.get(f, (0, 0))
+        per_file[f] = (got + (1 if k in tr else 0), total + 1)
+
     # --- Arabic plurals, checked as a structure and not as loose keys ---------
     # `read_entries` flattens <plurals> into one key per quantity, which is right
     # for format/escaping checks and completely blind to the thing that actually
@@ -1225,26 +1436,30 @@ def cmd_lint(args):
         got = ar_pl.get(name)
         label = f"plurals/{name}"
         if not got:
-            add("warn", label, "no Arabic <plurals> for this name — every count "
-                               "will fall back to the English form")
+            add("warn", label, f"no {args.locale} <plurals> for this name — every count "
+                               "will fall back to the source form")
             continue
 
-        hard = [q for q in PLURAL_REQUIRED if q not in got]
+        # Which categories are required is a property of the target language, not
+        # of Arabic: Hebrew has no `few`, Persian and Urdu have neither `few` nor
+        # `zero`. Assuming all six would demand forms those languages never use.
+        hard = [q for q in plural_required(args.locale) if q not in got]
         if hard:
             # Not a build failure: aapt2 compiles and links a translation whose
             # <plurals> lacks `other` (verified). It is worse than that — the
-            # build is silent and the counts simply have no Arabic value.
+            # build is silent and the counts simply have no value in that locale.
             why = ("it covers every count the other categories do not (100, 101, …) "
                    "and the build will not warn" if "other" in hard
                    else "those counts fall back to `other`")
-            add("error", label, "missing Arabic "
+            add("error", label, "missing "
                 f"{'quantity' if len(hard) == 1 else 'quantities'}: "
-                + ", ".join(f"{q} ({PLURAL_RANGE[q]})" for q in hard) + f" — {why}")
+                + ", ".join(f"{q} ({plural_range(args.locale, q)})" for q in hard)
+                + f" — {why}")
 
-        soft = [q for q in PLURAL_OPTIONAL if q not in got]
+        soft = [q for q in plural_optional(args.locale) if q not in got]
         if soft:
             add("warn", label, "no "
-                + ", ".join(f"{q} ({PLURAL_RANGE[q]})" for q in soft)
+                + ", ".join(f"{q} ({plural_range(args.locale, q)})" for q in soft)
                 + " form — those counts use `other`")
 
         # Distinct categories carrying identical text is the tell that nobody
@@ -1266,15 +1481,38 @@ def cmd_lint(args):
                          f"geometry; it will not mirror with the UI, check it by eye")
 
     print(f"[FINDING] lint res/values-{args.locale}: {covered}/{len(src)} translated ({cov:.1f}%)")
+    # Per file only when there is more than one, so the common case stays one line.
+    if len(per_file) > 1 or args.verbose:
+        worst = min(per_file.items(), key=lambda kv: kv[1][0] / max(kv[1][1], 1))
+        for f in sorted(per_file, key=lambda k: per_file[k][0] / max(per_file[k][1], 1)):
+            got, total = per_file[f]
+            pct = 100.0 * got / max(total, 1)
+            tag = "  <- weakest" if f == worst[0] and pct < cov else ""
+            print(f"            {f:<20} {got}/{total}  {pct:5.1f}%{tag}")
     for lvl, key, msg in issues:
         if lvl == "info" and not args.verbose:
             continue
         print(f"  [{lvl.upper()}] {key}: {msg}")
     if not issues:
         print("  clean — no hazards detected")
-    print(f"[{'FAIL' if errors else 'OK'}] {errors} error(s), "
+    # A threshold turns "how are we doing" into a gate. `--fail-under` counts the
+    # overall number; `--fail-under-file` catches the one file dragging it down.
+    gate_failed = False
+    floor = getattr(args, "fail_under", None)
+    if floor is not None and cov + 1e-9 < floor:
+        print(f"[FAIL] coverage {cov:.1f}% is below the --fail-under {floor}%")
+        gate_failed = True
+    floor_file = getattr(args, "fail_under_file", None)
+    if floor_file is not None:
+        for f in sorted(per_file):
+            got, total = per_file[f]
+            pct = 100.0 * got / max(total, 1)
+            if pct + 1e-9 < floor_file:
+                print(f"[FAIL] {f} at {pct:.1f}% is below the --fail-under-file {floor_file}%")
+                gate_failed = True
+    print(f"[{'FAIL' if (errors or gate_failed) else 'OK'}] {errors} error(s), "
           f"{sum(1 for i in issues if i[0] == 'warn')} warning(s)")
-    return 1 if errors else 0
+    return 1 if (errors or gate_failed) else 0
 
 
 def cmd_build(args):
@@ -1364,6 +1602,8 @@ def build_parser():
     s.add_argument("--force", action="store_true", help="overwrite an existing values-<locale>")
     s.add_argument("--no-locale-config", action="store_true", dest="no_locale_config",
                    help="skip res/xml/locales_config.xml and the manifest attribute")
+    s.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="print what would be written, change nothing")
     common(s)
     s.set_defaults(func=cmd_scaffold)
 
@@ -1371,6 +1611,8 @@ def build_parser():
     s.add_argument("proj")
     s.add_argument("--tsv", required=True)
     s.add_argument("--locale", default="ar")
+    s.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="print what would be written, change nothing")
     common(s)
     s.set_defaults(func=cmd_apply)
 
@@ -1378,6 +1620,10 @@ def build_parser():
     s.add_argument("proj")
     s.add_argument("--locale", default="ar")
     s.add_argument("-v", "--verbose", action="store_true", help="include info-level notes")
+    s.add_argument("--fail-under", type=float, metavar="PCT", dest="fail_under",
+                   help="exit non-zero when overall coverage is below PCT")
+    s.add_argument("--fail-under-file", type=float, metavar="PCT", dest="fail_under_file",
+                   help="exit non-zero when any single source file is below PCT")
     common(s)
     s.set_defaults(func=cmd_lint)
 

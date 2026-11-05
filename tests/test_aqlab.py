@@ -447,6 +447,216 @@ def test_forced_scaffold_keeps_six_plural_forms(proj, tmp):
           (root / "aqlab-backup-ar" / "strings.xml").exists())
 
 
+def test_dry_run_changes_nothing(proj, tmp):
+    """`--dry-run` must print the plan and touch not one byte.
+
+    `apply` and `scaffold` rewrite whole files. Before this, trying a command
+    meant living with its result — and a half-filled table used to delete the
+    translations beside it, so 'trying it' was the dangerous part.
+    """
+    work = Path(tmp) / "dryrun"
+    shutil.copytree(proj, work)
+    res = work / "res"
+    ar = res / "values-ar"
+    ar.mkdir(parents=True, exist_ok=True)
+    (ar / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<string name="app_name">اسم</string></resources>', encoding="utf-8")
+    tsv = work / "t.tsv"
+    tsv.write_text("# key\tsource\ttranslation\napp_name\tx\tاسم جديد\nwelcome\ty\tأهلاً\n",
+                   encoding="utf-8")
+
+    def snapshot():
+        return {p: p.read_bytes() for p in res.rglob("*") if p.is_file()}
+
+    before = snapshot()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = A.cmd_apply(argparse.Namespace(proj=str(work), tsv=str(tsv), locale="ar",
+                                           quiet=True, dry_run=True))
+    check("dry apply rc", rc == 0)
+    check("dry apply wrote nothing", snapshot() == before)
+    text = out.getvalue()
+    check("dry apply says DRY", "[DRY]" in text, text[:200])
+    check("dry apply marks overwrite", "would overwrite" in text, text[:300])
+    check("dry apply names the file", "strings.xml" in text)
+
+    out2 = io.StringIO()
+    with contextlib.redirect_stdout(out2):
+        rc = A.cmd_scaffold(argparse.Namespace(proj=str(work), locale="ar", tsv=None,
+                                               force=True, quiet=True, dry_run=True))
+    check("dry scaffold rc", rc == 0)
+    check("dry scaffold wrote nothing", snapshot() == before)
+    check("dry scaffold made no backup", not (work / "aqlab-backup-ar").exists())
+    check("dry scaffold says DRY", "[DRY]" in out2.getvalue(), out2.getvalue()[:200])
+
+    # the real run must then do exactly what the plan promised
+    out3 = io.StringIO()
+    with contextlib.redirect_stdout(out3):
+        A.cmd_apply(argparse.Namespace(proj=str(work), tsv=str(tsv), locale="ar",
+                                       quiet=True))
+    got = (ar / "strings.xml").read_text(encoding="utf-8")
+    check("real run applied the change", "اسم جديد" in got)
+    check("real run kept the rest", "أهلاً" in got)
+
+    # `commit()` is the last line of defence: commands short-circuit before it on
+    # a dry run, so the guard inside it needs its own check or it is never proven.
+    target = Path(tmp) / "commit_guard.txt"
+    sink = A.Writes(dry=True)
+    sink.add(target, "should not exist\n")
+    check("dry commit returns nothing", sink.commit() == [])
+    check("dry commit wrote nothing", not target.exists())
+    live = A.Writes(dry=False)
+    live.add(target, "written\n")
+    live.commit()
+    check("live commit writes", target.exists() and target.read_text(encoding="utf-8") == "written\n")
+
+
+def test_non_resource_files_are_reported(tmp):
+    """A stray file under res/ breaks `aapt2 compile`; say so at write time.
+
+    Verified against aapt2: `notes.tsv`, `strings.xml.bak` and `old.xml.orig`
+    under res/ each produce `error: invalid file path`. This bit the project
+    once with a .bak the tool itself wrote, so the check lives next to the write.
+    """
+    root = Path(tmp) / "stray"
+    res = root / "res"
+    for d in ("values", "values-ar", "drawable", "xml"):
+        (res / d).mkdir(parents=True)
+    (res / "values" / "strings.xml").write_text("<resources/>", encoding="utf-8")
+    (res / "drawable" / "ic_a.xml").write_text("<vector/>", encoding="utf-8")
+    (res / "drawable" / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (res / "values-ar" / "strings.xml.bak").write_text("x", encoding="utf-8")
+    (res / "values-ar" / "notes.tsv").write_text("x", encoding="utf-8")
+    (res / "values" / "old.xml.orig").write_text("x", encoding="utf-8")
+    (res / "notaresourcedir" / "a.xml").parent.mkdir()
+    (res / "notaresourcedir" / "a.xml").write_text("<x/>", encoding="utf-8")
+
+    bad = {p.name for p in A.non_resource_files(res)}
+    check("bak caught", "strings.xml.bak" in bad, str(bad))
+    check("tsv caught", "notes.tsv" in bad, str(bad))
+    check(".orig caught", "old.xml.orig" in bad, str(bad))
+    check("unknown folder caught", "a.xml" in bad, str(bad))
+    check("real resource not flagged", "strings.xml" not in bad and "ic_a.xml" not in bad,
+          str(bad))
+    check("image not flagged", "photo.png" not in bad, str(bad))
+
+
+def test_coverage_per_file_and_gates(tmp):
+    """One number hides the file that is behind; a threshold makes it a gate.
+
+    An overall 88% can be strings.xml at 99% and plurals.xml at 60%. The 60% is
+    what a reader sees on screen, and the total said nothing about it.
+    """
+    root = Path(tmp) / "cov"
+    res = root / "res"
+    for d in ("values", "values-ar"):
+        (res / d).mkdir(parents=True)
+    # 10 strings, 4 plurals; Arabic covers all strings and no plurals
+    (res / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        + "".join(f'<string name="s{i}">text {i}</string>' for i in range(10))
+        + "</resources>", encoding="utf-8")
+    (res / "values" / "plurals.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        + "".join(f'<plurals name="p{i}"><item quantity="one">%d a</item>'
+                  f'<item quantity="other">%d b</item></plurals>' for i in range(4))
+        + "</resources>", encoding="utf-8")
+    (res / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        + "".join(f'<string name="s{i}">نص {i}</string>' for i in range(10))
+        + "</resources>", encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="x"/></manifest>', encoding="utf-8")
+
+    def run(**kw):
+        ns = argparse.Namespace(proj=str(root), locale="ar", quiet=True,
+                                verbose=kw.pop("verbose", False),
+                                fail_under=kw.pop("fail_under", None),
+                                fail_under_file=kw.pop("fail_under_file", None))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = A.cmd_lint(ns)
+        return rc, out.getvalue()
+
+    rc, text = run()
+    check("per-file lines shown", "strings.xml" in text and "plurals.xml" in text, text[:400])
+    check("strings at 100", "10/10" in text, text[:400])
+    check("plurals at 0", "0/8" in text, text[:400])
+    check("weakest marked", "weakest" in text, text[:400])
+    # the per-file block is indented under the summary; nothing else in lint is
+    check("per-file block present", "\n            plurals.xml" in text, text[:700])
+
+    rc, _ = run(fail_under=50)
+    check("--fail-under below actual passes", rc != 1, str(rc))
+
+    rc, text = run(fail_under=99)
+    check("--fail-under above actual fails", rc == 1, str(rc))
+    check("says which gate", "below the --fail-under" in text, text[-300:])
+
+    rc, text = run(fail_under_file=50)
+    check("--fail-under-file catches the weak file", rc == 1, str(rc))
+    check("names the file", "plurals.xml" in text[-400:], text[-300:])
+
+
+def test_rtl_locales_beyond_arabic(tmp):
+    """Hebrew, Persian and Urdu are RTL and do not share Arabic's six categories.
+
+    Verified against CLDR (charts/47, language_plural_rules): ar has
+    zero/one/two/few/many/other; he has one/two/many/other — no zero, no few;
+    fa and ur have one/other. Demanding six of every language would put forms on
+    translators that those languages never use.
+    """
+    check("ar six", A.plural_categories("ar") ==
+          ("zero", "one", "two", "few", "many", "other"))
+    check("he four", A.plural_categories("he") == ("one", "two", "many", "other"))
+    check("fa two", A.plural_categories("fa") == ("one", "other"))
+    check("ur two", A.plural_categories("ur") == ("one", "other"))
+    check("region resolves", A.plural_categories("he-IL") == A.plural_categories("he"))
+    check("rtl flags", all(A.is_rtl(x) for x in ("ar", "he", "fa", "ur", "ar-rSA")))
+    check("ltr is not rtl", not A.is_rtl("en") and not A.is_rtl("fr"))
+
+    # a Hebrew plural table gets four stubs, not six
+    root = Path(tmp) / "heb"
+    res = root / "res"
+    (res / "values").mkdir(parents=True)
+    (res / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<string name="a">x</string>'
+        '<plurals name="files"><item quantity="one">%d f</item>'
+        '<item quantity="other">%d fs</item></plurals></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="x"/></manifest>', encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_scaffold(argparse.Namespace(proj=str(root), locale="he", tsv=None,
+                                          force=False, quiet=True))
+    rows = [l.split("\t")[0] for l in (root / "values-he.tsv").read_text(
+        encoding="utf-8").splitlines() if l.startswith("files|")]
+    check("he scaffold: four rows", rows == ["files|one", "files|two", "files|many",
+                                             "files|other"], str(rows))
+    check("he has no few row", "files|few" not in rows, str(rows))
+
+    # lint must not ask Hebrew for `few`, and must ask for `many`
+    (res / "values-he").mkdir(parents=True, exist_ok=True)
+    (res / "values-he" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<string name="a">א</string>'
+        '<plurals name="files"><item quantity="one">קובץ</item>'
+        '<item quantity="other">קבצים</item></plurals></resources>', encoding="utf-8")
+    out2 = io.StringIO()
+    with contextlib.redirect_stdout(out2):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="he", quiet=True,
+                                      verbose=False, fail_under=None,
+                                      fail_under_file=None))
+    text = out2.getvalue()
+    check("he missing many reported", "many" in text and "plurals/files" in text, text[:600])
+    check("he never asked for few", "few" not in text, text[:600])
+    check("he range is its own", "20, 30, 40" in text, text[:600])
+
+
 def test_scaffold_apply(proj, tmp):
     rc = A.cmd_scaffold(argparse.Namespace(proj=str(proj), locale="ar", tsv=None,
                                           force=False, quiet=True))
@@ -962,6 +1172,10 @@ def main():
         test_locale_config(tmp)
         test_text_like_vectors(tmp)
         test_forced_scaffold_keeps_six_plural_forms(proj, tmp)
+        test_dry_run_changes_nothing(proj, tmp)
+        test_non_resource_files_are_reported(tmp)
+        test_coverage_per_file_and_gates(tmp)
+        test_rtl_locales_beyond_arabic(tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)

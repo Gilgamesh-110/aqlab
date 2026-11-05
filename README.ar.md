@@ -48,7 +48,7 @@ python aqlab.py lint  examples/demo-project
 [DONE] 4 file(s) updated
 [DONE] 12 translation(s) -> examples/demo-project/res/values-ar/strings.xml
 [FINDING] lint res/values-ar: 12/12 translated (100.0%)
-  [ERROR] plurals/selected_count: missing Arabic quantities: few (3-10), many (11-99) — those counts fall back to `other`
+  [ERROR] plurals/selected_count: missing quantities: few (3-10), many (11-99) — those counts fall back to `other`
   [WARN] plurals/selected_count: no zero (0), two (2) form — those counts use `other`
 [FAIL] 1 error(s), 1 warning(s)
 ```
@@ -156,9 +156,9 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `scan <apk\|dir>` | تقرير للقراءة فقط: اللغات، `supportsRtl`، عدد `left/right` الباقية، نسبة التغطية. `--json` للأدوات. |
 | `decode <apk>` | يفك الـAPK لمشروع قابل للتعديل. يتخطّى `smali/` افتراضياً — التفاصيل تحت. |
 | `rtl <dir>` | يضبط `android:supportsRtl` ويحوّل `left/right` → `start/end` بكل `res/**`. `--dry-run` للمعاينة. |
-| `scaffold <dir>` | ينشئ `res/values-ar/` وجدول ترجمة `values-ar.tsv`، و(API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. يقرا **كل** `values/*.xml` مو `strings.xml` بس. |
-| `apply <dir> --tsv` | يستورد الجدول المترجم إلى `values-ar/`، وكل إدخال لملفه الأصلي |
-| `lint <dir>` | أخطاء التهريب، اختلاف الـformat specifiers، **بنية صيغ الجمع العربية**، التغطية، الـvector اللي يشبه نص. كود خروج غير صفري عند الأخطاء. |
+| `scaffold <dir>` | ينشئ `res/values-<locale>/` وجدول ترجمة، و(API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. يقرا **كل** `values/*.xml` مو `strings.xml` بس. `--dry-run` للمعاينة. |
+| `apply <dir> --tsv` | يستورد الجدول المترجم إلى مجلد اللغة، وكل إدخال لملفه الأصلي. `--dry-run` للمعاينة. |
+| `lint <dir>` | أخطاء التهريب، اختلاف الـformat specifiers، بنية صيغ الجمع، التغطية (الكل ولكل ملف)، الـvector اللي يشبه نص. كود خروج غير صفري عند الأخطاء؛ `--fail-under` / `--fail-under-file` بوابة CI على التغطية. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `all <apk>` | السلسلة كاملة |
 
@@ -231,7 +231,7 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
   [ERROR] discount: bare `%` — must be `%%` or a format specifier, aapt will reject it
   [ERROR] welcome: format specifiers differ: source ['%1$s'] vs arabic ['%s']
   [ERROR] note: unescaped apostrophe — use \' inside Android string resources
-  [ERROR] plurals/selected_count: missing Arabic quantities: few (3-10), many (11-99)
+  [ERROR] plurals/selected_count: missing quantities: few (3-10), many (11-99)
 [FAIL] 4 error(s), 1 warning(s)
 ```
 
@@ -295,7 +295,62 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 `values-night`) مو لغات وتنستثنى.
 
 
-كود الخروج غير صفري عند الأخطاء، فينزل مباشرة بالـCI.
+### لغات RTL ثانية
+
+جداول الجمع وآلية `supportsRtl` مو خاصة بالعربية. CLDR يعطي فئات لكل لغة،
+وهي فعلاً مختلفة:
+
+| اللغة | الفئات | `many` تعني |
+|---|---|---|
+| `ar` | `zero one two few many other` | 11–99 |
+| `he` | `one two many other` | 20، 30، 40 … |
+| `fa` | `one other` | — |
+| `ur` | `one other` | — |
+
+```bash
+aqlab scaffold proj --locale he
+aqlab lint proj --locale he
+```
+
+لو طلبنا من العبرية صيغة `few`، أو من الفارسية `zero`، راح نخلّي المترجم يعبّي
+صيغة اللغة ما تستخدمها أبداً — فالجداول من
+[CLDR](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html)،
+مو من العربية بالقياس.
+
+### تجربة أمر بلا تنفيذه
+
+كل أمر يكتب عنده `--dry-run`، ويطبع الخطة بالضبط:
+
+```
+$ aqlab apply proj --tsv ar.tsv --dry-run
+[DRY] would write 3 file(s) from 1424 translation(s)
+  would overwrite: proj/res/values-ar/strings.xml (1370 entries)
+  would overwrite: proj/res/values-ar/plurals.xml (54 entries)
+  would create: proj/values-ar.tsv (1462 entries)
+```
+
+الكتابات تنلم كلها وتنطبق سوية، فالفشل بنص الطريق يخلّي مجلد اللغة مثل ما كان
+مو نصف مكتوب.
+
+### التغطية كبوابة
+
+`lint` يبلّغ عن التغطية لكل ملف مصدري، لأن رقم واحد يخفي الملف المتأخر —
+88% بالكل ممكن تكون `strings.xml` بـ99% و`plurals.xml` بـ60%:
+
+```
+[FINDING] lint res/values-ar: 1388/1426 translated (97.3%)
+            strings.xml          1370/1408   97.3%  <- weakest
+            plurals.xml          18/18  100.0%
+```
+
+بوابتها بالـCI:
+
+```bash
+aqlab lint proj --fail-under 95            # الكل
+aqlab lint proj --fail-under-file 90       # أي ملف واحد
+```
+
+
 
 ## الجزء الثاني اللي ما يسويه غيرنا: العربي عنده ست صيغ جمع مو ثنتين
 
@@ -321,7 +376,7 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 `aqlab lint` يقرا الـ`<plurals>` **كبنية** ويبلّغ:
 
 ```
-[ERROR] plurals/n_items: missing Arabic quantities: few (3-10), many (11-99)
+[ERROR] plurals/n_items: missing quantities: few (3-10), many (11-99)
         — those counts fall back to `other`
 [WARN]  plurals/n_items: no zero (0), two (2) form — those counts use `other`
 [WARN]  plurals/n_items: few, many, other carry identical text

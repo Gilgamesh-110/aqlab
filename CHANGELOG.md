@@ -7,9 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- `--dry-run` for every writing command
-- coverage report per file rather than one number
-- RTL beyond Arabic (`he`, `fa`, `ur`)
+- `aqlab diff` between two APKs
+- automatic `<xliff:g>` around format specifiers
+
+## [0.1.13] — 2026-11-06
+
+Three things from the plan, each measured rather than assumed.
+
+### Added
+- **`--dry-run` on `apply` and `scaffold`.** Prints the exact plan and changes
+  nothing:
+
+  ```
+  [DRY] would write 3 file(s) from 1424 translation(s)
+    would overwrite: proj/res/values-ar/strings.xml (1370 entries)
+    would create: proj/values-ar.tsv (1462 entries)
+  ```
+
+  The writes are also collected and applied together now, so a failure part-way
+  through leaves the locale folder as it was instead of half-rewritten.
+
+- **Coverage per source file, and `--fail-under` / `--fail-under-file`.**
+  One number hides the file that is behind: an overall 88% can be `strings.xml`
+  at 99% and `plurals.xml` at 60%. Both ratios print, the weakest is marked, and
+  either can gate CI.
+
+- **Other RTL locales: `he`, `fa`, `ur`.** The plural tables were Arabic's six
+  applied to everything. CLDR gives each language its own set — Hebrew has
+  `one/two/many/other` (no `zero`, no `few`) and `many` means 20, 30, 40 …;
+  Persian and Urdu have `one/other`. Demanding six of Hebrew would have left a
+  `few` form on translators for a category the language never uses. Ranges in
+  messages come from the locale too, so Hebrew reports `many (20, 30, 40 …)`
+  rather than Arabic's `11-99`.
+
+- **`non_resource_files()`: says when a file under `res/` will break the build.**
+  `aapt2 compile --dir res` rejects anything that is not a resource, and this
+  project shipped that bug twice — a `.bak` and a `.tsv`. `apply` and `scaffold`
+  now check and warn where the mistake is made rather than at build time.
+
+### Changed
+- Lint messages no longer say "Arabic" for a locale that is not: `missing
+  quantities`, `no <locale> <plurals> for this name`.
 
 ## [0.1.12] — 2026-11-06
 
