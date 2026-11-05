@@ -12,7 +12,7 @@ escaping) is implemented here.
     aqlab rtl     <dir>                manifest supportsRtl + left/right -> start/end
     aqlab scaffold<dir>                build ar.tsv + res/values-ar/strings.xml
     aqlab apply   <dir> --tsv ar.tsv   import translated rows
-    aqlab lint    <dir>                BiDi hazards, escaping bugs, coverage
+    aqlab lint    <dir>                format, escaping, coverage — CI friendly
     aqlab build   <dir>                apktool b -> zipalign -> apksigner
     aqlab all     <apk>                decode + rtl + apply + lint + build
 
@@ -1196,7 +1196,7 @@ def build_parser():
     common(s)
     s.set_defaults(func=cmd_apply)
 
-    s = sub.add_parser("lint", help="BiDi hazards, escaping bugs, coverage — CI friendly")
+    s = sub.add_parser("lint", help="format specifier, escaping and coverage checks — CI friendly")
     s.add_argument("proj")
     s.add_argument("--locale", default="ar")
     s.add_argument("-v", "--verbose", action="store_true", help="include info-level notes")
