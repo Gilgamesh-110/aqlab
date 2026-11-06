@@ -158,7 +158,7 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `rtl <dir>` | يضبط `android:supportsRtl` ويحوّل `left/right` → `start/end` بكل `res/**`. `--dry-run` للمعاينة. |
 | `scaffold <dir>` | ينشئ `res/values-<locale>/` وجدول ترجمة، و(API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. يقرا **كل** `values/*.xml` مو `strings.xml` بس. `--dry-run` للمعاينة. |
 | `apply <dir> --tsv` | يستورد الجدول المترجم إلى مجلد اللغة، وكل إدخال لملفه الأصلي. `--dry-run` للمعاينة. |
-| `lint <dir>` | أخطاء التهريب، اختلاف الـformat specifiers، بنية صيغ الجمع، التغطية (الكل ولكل ملف)، الـvector اللي يشبه نص. كود خروج غير صفري عند الأخطاء؛ `--fail-under` / `--fail-under-file` بوابة CI على التغطية. |
+| `lint <dir>` | أخطاء التهريب، اختلاف الـformat specifiers، بنية صيغ الجمع، التغطية (الكل ولكل ملف)، الـvector اللي يشبه نص، و`RtlSymmetry` / `RtlHardcoded` / `DirectionPins`. كود خروج غير صفري عند الأخطاء؛ `--fail-under` / `--fail-under-file` بوابة CI على التغطية؛ و`--fix` يكمّل الطرف الناقص (`paddingStart` مع `paddingEnd` مثلاً)، و`--fix --dry-run` يعرض الخطة بس. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `diff <a.apk> <b.apk>` | النصوص المضافة/المحذوفة/المتغيّرة بين APKين، مقروءة من جدول الموارد مباشرة. كود خروج غير صفري عند الاختلاف. |
 | `xliff <dir>` | يلفّ كل format specifier بـ`<xliff:g>` حتى المترجم ما يقدر يعيد ترتيبه أو يحذفه. `--dry-run` للمعاينة. |
@@ -393,6 +393,7 @@ $ aqlab apply proj --tsv ar.tsv --dry-run
 ```bash
 aqlab lint proj --fail-under 95            # الكل
 aqlab lint proj --fail-under-file 90       # أي ملف واحد
+aqlab lint proj --fix --dry-run            # اعرض خطة تكميل padding/margin
 ```
 
 

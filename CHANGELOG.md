@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lint --fix`.** Fills a missing `paddingStart` / `paddingEnd` /
+  `layout_marginStart` / `layout_marginEnd` partner on views that already use
+  the modern spellings, copying the value from the side that exists. Idempotent
+  and `--dry-run` aware. Physical pairs (`paddingLeft` without `paddingRight`)
+  are deliberately left to `aqlab rtl`: measured on a real APK, filling one of
+  those puts a `marginStart` beside a lone `marginRight` and turns one finding
+  into two.
 - **`DirectionPins`.** Two ways an app decides the reading direction at
   authoring time instead of letting the locale decide:
   `android:layoutDirection="ltr"` on a horizontal row that *also* sets

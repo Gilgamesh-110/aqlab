@@ -941,6 +941,79 @@ def test_hardcoded_gravity(tmp):
     check("lint warns with the fix", "aqlab rtl" in out.getvalue(), out.getvalue()[:400])
 
 
+def test_lint_fix(tmp):
+    """`lint --fix` fills a missing padding/margin partner, idempotently.
+
+    Measured on a real APK first: filling every hole the report named made one
+    case worse — an element with a lone `marginRight` got a `marginStart` beside
+    it and went from 1 finding to 2. Physical pairs belong to `aqlab rtl`, which
+    renames them; `--fix` only completes the modern spellings.
+
+    Also measured: rebuilding the matched tag from a suffix test dropped the `/`
+    off `<View ... />` and left an unclosed tag, which breaks the whole layout.
+    """
+    root = Path(tmp) / "fixsym"
+    res = root / "res"
+    for d in ("values", "values-ar", "layout"):
+        (res / d).mkdir(parents=True)
+    for d in ("values", "values-ar"):
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+    layout = res / "layout" / "main.xml"
+    layout.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <TextView android:paddingStart="16dp" android:layout_width="wrap_content"\n'
+        '        android:layout_height="wrap_content"/>\n'
+        '    <View android:layout_marginEnd="8dp" android:layout_width="1dp"\n'
+        '        android:layout_height="1dp" />\n'
+        '    <ImageButton android:paddingLeft="12dp" android:layout_width="1dp"\n'
+        '        android:layout_height="1dp"/>\n'
+        '    <TextView android:paddingStart="4dp" android:paddingEnd="4dp"\n'
+        '        android:layout_width="wrap_content"\n'
+        '        android:layout_height="wrap_content"/>\n'
+        '</LinearLayout>\n', encoding="utf-8")
+
+    got = A.symmetric_fix(' android:paddingStart="16dp"')
+    check("adds paddingEnd", 'android:paddingEnd="16dp"' in got, got)
+    check("physical alone untouched",
+          A.symmetric_fix(' android:paddingLeft="12dp"') == ' android:paddingLeft="12dp"')
+
+    args = argparse.Namespace(proj=str(root), locale="ar", quiet=True, verbose=False,
+                              fail_under=None, fail_under_file=None, fix=True,
+                              dry_run=True)
+    before = layout.read_text(encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(args)
+    check("dry run writes nothing", layout.read_text(encoding="utf-8") == before)
+    check("dry run announces", "would fix" in out.getvalue(), out.getvalue()[:300])
+
+    args.dry_run = False
+    with contextlib.redirect_stdout(io.StringIO()):
+        A.cmd_lint(args)
+    after = layout.read_text(encoding="utf-8")
+    check("paddingEnd added", 'paddingStart="16dp" android:paddingEnd="16dp"' in after, after)
+    check("marginStart added", 'layout_marginStart="8dp"' in after, after)
+    check("self-closing kept", 'android:layout_height="1dp" />' in after, after)
+    check("physical pair untouched", 'android:paddingLeft="12dp"' in after
+          and "paddingRight" not in after, after)
+    check("balanced element untouched", after.count('android:paddingEnd="4dp"') == 1, after)
+
+    with contextlib.redirect_stdout(io.StringIO()) as out2:
+        A.cmd_lint(args)
+    check("idempotent", layout.read_text(encoding="utf-8") == after, after)
+    check("second pass reports nothing", "fixed:" not in out2.getvalue(), out2.getvalue()[:200])
+
+    remaining = A.symmetry_problems(root)
+    check("only the physical hole left", len(remaining) == 1
+          and remaining[0][2] == "paddingLeft", str(remaining))
+
+
 def test_direction_pins(tmp):
     """DirectionPins: a pin over physical attrs keeps a row LTR in Arabic.
 
@@ -1532,6 +1605,7 @@ def main():
         test_xliff_wrapping(tmp)
         test_symmetry_check(tmp)
         test_hardcoded_gravity(tmp)
+        test_lint_fix(tmp)
         test_direction_pins(tmp)
         test_rtl(proj)
         test_lint(proj)

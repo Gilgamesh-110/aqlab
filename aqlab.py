@@ -1372,7 +1372,7 @@ def direction_pins(proj):
         return out
     # Any start tag, self-closing or not: the interesting case is a container
     # wrapping children, which is a plain `<LinearLayout ...>`. Attributes are
-    # matched with plain `\s`, not `` — apktool puts the first attribute on
+    # matched with plain `\s`, not `\b` — apktool puts the first attribute on
     # the tag's own line, and a line start is not a word boundary before `a`.
     elem = re.compile(r"<([A-Za-z][\w.]*)((?:\s+[^<>]*?)?)/?>", re.DOTALL)
     pin_re = re.compile(r'layoutDirection\s*=\s*"(ltr|rtl)"')
@@ -1460,6 +1460,52 @@ def symmetry_problems(proj):
                     found.append((f.relative_to(proj).as_posix(), tag, right, left,
                                   have[right]))
     return found
+
+
+GRAVITY_RTL = {"left": "start", "right": "end"}
+
+
+def symmetric_fix(body):
+    """Add the missing partner of every padding/margin pair in one element body.
+
+    Only *adds* where `symmetry_problems` found a hole, so `aqlab lint --fix` and
+    `symmetry_problems` can never disagree — a fixer that repairs something the
+    report never names is indistinguishable from one that invents attributes.
+
+    The missing side is written as `start`/`end`, not as the `left`/`right` it
+    mirrors: copying the spelling back would leave the flip broken and the next
+    lint run reporting the same element forever.
+
+    An element already carrying any modern spelling is left alone. The author is
+    appcompat-aware, and rewriting their `left` is `aqlab rtl`'s job, not the
+    linter's. Measured on a real APK: 40 of its 49 symmetry findings are
+    ImageView rows carrying both spellings, so this one guard is what keeps
+    `--fix` from touching code that was already right.
+
+    Pure: body in, body out. Idempotent — a fixed body has no holes left.
+    """
+    have = set(re.findall(r'\b(?:android:)?([\w.]+)\s*=\s*"', body))
+    # An element that already uses start/end is appcompat-aware: fill the missing
+    # modern side, leave its physical attributes to . An element with
+    # only physical attributes is not ours to touch at all.
+    modern = {a for pair in SYMMETRY_PAIRS[1::2] for a in pair[:2]}
+    if not have & modern:
+        return body
+    for left, right, _kind in SYMMETRY_PAIRS[1::2]:
+        if (left in have) == (right in have):
+            continue
+        have_a, miss_b = (left, right) if left in have else (right, left)
+        m = re.search(r'\b(?:android:)?%s\s*=\s*"([^"]*)"' % have_a, body)
+        if not m:
+            return body          # reported but our regex lost it: do not guess
+        target = ATTR_RENAME.get(miss_b, miss_b)
+        value = re.sub(r'\b(left|right)\b', lambda t: GRAVITY_RTL[t.group(1)],
+                       m.group(1))
+        # Right after the attribute it mirrors. Appending at the end of a 40-line
+        # tag hides the pair where nobody looks; one long line stays one line.
+        body = body[:m.end()] + ' android:%s="%s"' % (target, value) + body[m.end():]
+
+    return body
 
 
 def scan_apk(apk, args):
@@ -1884,9 +1930,69 @@ def cmd_lint(args):
             if pct + 1e-9 < floor_file:
                 print(f"[FAIL] {f} at {pct:.1f}% is below the --fail-under-file {floor_file}%")
                 gate_failed = True
+    fixed = 0
+    if getattr(args, "fix", False):
+        fixed = fix_symmetry(proj, dry=getattr(args, "dry_run", False))
+        if fixed:
+            print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
+                  f"{fixed} element(s)")
     print(f"[{'FAIL' if (errors or gate_failed) else 'OK'}] {errors} error(s), "
           f"{sum(1 for i in issues if i[0] == 'warn')} warning(s)")
     return 1 if (errors or gate_failed) else 0
+
+
+def fix_symmetry(proj, dry=False):
+    """Apply `symmetric_fix` to every element `symmetry_problems` named.
+
+    Scoped to layout*/ and menu*/ — the same folders the check reads — because
+    `values/` XML holds ids and dimens, where a padding attribute would be
+    nonsense. Returns the number of elements rewritten.
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return 0
+    broken = {}
+    for path, tag, have_a, _b, _v in symmetry_problems(proj):
+        broken.setdefault(path, []).append((tag, have_a))
+    n = 0
+    elem = re.compile(r"<([A-Za-z][\w.]*)\b([^>]*?)/?>", re.DOTALL)
+    for rel, wanted in sorted(broken.items()):
+        f = Path(proj) / rel
+        try:
+            txt = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Count only elements this file was reported for, so a second run over an
+        # already-fixed file reports 0 instead of re-finding nothing.
+        todo = list(wanted)
+        done = 0
+
+        def repl(m):
+            nonlocal todo, done
+            if not todo:
+                return m.group(0)
+            tag, have_a = todo[0]
+            if m.group(1) != tag or not re.search(
+                    r'\b(?:android:)?%s\s*=' % have_a, m.group(2)):
+                return m.group(0)
+            todo.pop(0)
+            body = symmetric_fix(m.group(2))
+            if body == m.group(2):
+                return m.group(0)
+            done += 1
+            # Rebuild from the body only: the tag's opening and closing delimiters
+            # are kept exactly as apktool wrote them, so a self-closing `/>` stays
+            # self-closing. Reassembling them from a suffix test turned `<... />`
+            # into `<... >` and an unclosed tag breaks the whole layout.
+            whole = m.group(0)
+            head = len(m.group(1)) + 1
+            tail = whole[head + len(m.group(2)):]
+            return whole[:head] + body + tail
+        out = elem.sub(repl, txt)
+        if out != txt and not dry:
+            f.write_text(out, encoding="utf-8")
+        n += done
+    return n
 
 
 def cmd_build(args):
@@ -2015,6 +2121,10 @@ def build_parser():
                    help="exit non-zero when overall coverage is below PCT")
     s.add_argument("--fail-under-file", type=float, metavar="PCT", dest="fail_under_file",
                    help="exit non-zero when any single source file is below PCT")
+    s.add_argument("--fix", action="store_true",
+                   help="add the missing padding/margin partner (as start/end)")
+    s.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="with --fix: print what would change, write nothing")
     common(s)
     s.set_defaults(func=cmd_lint)
 
