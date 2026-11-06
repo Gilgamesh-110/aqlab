@@ -1247,6 +1247,52 @@ def test_direction_pins(tmp):
     check("lint warns on the ltr pin", 'layoutDirection="ltr"' in v, v[:500])
     check("lint names the row", "t.xml" in v, v[:500])
 
+    # textDirection is pinned text inside a row that already sets a physical
+    # attribute: the row flips, the text does not. `firstStrong` is the platform
+    # default and follows the direction, so it must stay silent.
+    (res / "layout" / "td.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<LinearLayout android:orientation="horizontal" android:textDirection="ltr"'
+        ' android:paddingLeft="4.0dip"/>'
+        '<LinearLayout android:orientation="horizontal" android:textDirection="firstStrong"'
+        ' android:paddingLeft="4.0dip"/>'
+        '<LinearLayout android:orientation="horizontal" android:textDirection="rtl"/>'
+        '</LinearLayout>', encoding="utf-8")
+    tds = [g for g in A.direction_pins(root) if g[0] == "textDirection"]
+    check("one textDirection pin reported", len(tds) == 1, str(tds))
+    check("pinned ltr text caught", tds and tds[0][3] == "ltr", str(tds))
+    check("firstStrong not flagged",
+          not any(g[3] == "firstStrong" for g in tds), str(tds))
+    check("text pin without physical attrs not flagged",
+          not any(g[2] == "LinearLayout" and g[3] == "rtl" and g[1].endswith("td.xml")
+                  and "physical" in g for g in tds), str(tds))
+
+    # One regex used to swallow the next sibling's attributes when two rows
+    # opened with the same tag, so a pin could disappear entirely.
+    (res / "layout" / "sib.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<LinearLayout android:orientation="horizontal" android:id="@id/a"/>'
+        '<LinearLayout android:orientation="horizontal" android:layoutDirection="ltr"'
+        ' android:paddingLeft="4.0dip"/>'
+        '</LinearLayout>', encoding="utf-8")
+    sib = A.direction_pins(root)
+    check("pin on the second same-tag sibling still found",
+          any(g[1].endswith("sib.xml") for g in sib), str(sib))
+
+    # An attribute value holding `>` (a selector, a `?attr/` chain) must not end
+    # the tag early, or every attribute after it is invisible.
+    (res / "layout" / "gt.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<LinearLayout android:orientation="horizontal" android:tag="a>b"'
+        ' android:layoutDirection="ltr" android:paddingLeft="4.0dip"/>'
+        '</LinearLayout>', encoding="utf-8")
+    gt = A.direction_pins(root)
+    check("pin after a `>` inside a value still found",
+          any(g[1].endswith("gt.xml") for g in gt), str(gt))
+
 
 def test_scaffold_apply(proj, tmp):
     rc = A.cmd_scaffold(argparse.Namespace(proj=str(proj), locale="ar", tsv=None,

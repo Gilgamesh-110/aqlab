@@ -1362,10 +1362,18 @@ def direction_pins(proj):
 
     `layoutDirection="rtl"` mirrors; reported by the same rule.
 
+    `textDirection="ltr"`/`"rtl"` is the same mistake one level down and is
+    reported by this rule rather than a check of its own: inside a row that
+    already carries left/right attributes it keeps the text pinned while the row
+    flips. `firstStrong` (the default), `anyRtl`, `locale` and `inherit` follow
+    the direction and stay silent. Measured on a real APK: no layout sets
+    `textDirection` at all, so this half is silent too.
+
     Manifest: `android:supportsRtl="false"` is the only wrong value — absence is
     the platform default and `aqlab scan` already flags that separately.
 
-    Returns [("supportsRtl", path, "")] and [("layoutDirection", path, tag, value)].
+    Returns [("supportsRtl", path, "")], [("layoutDirection", path, tag, value)]
+    and [("textDirection", path, tag, value)].
     """
     out = []
     manifest = Path(proj) / "AndroidManifest.xml"
@@ -1379,27 +1387,29 @@ def direction_pins(proj):
         return out
     # Any start tag, self-closing or not: the interesting case is a container
     # wrapping children, which is a plain `<LinearLayout ...>`. Attributes are
-    # matched with plain `\s`, not `\b` — apktool puts the first attribute on
+    # matched with plain `\s`, not `` — apktool puts the first attribute on
     # the tag's own line, and a line start is not a word boundary before `a`.
-    elem = re.compile(r"<([A-Za-z][\w.]*)((?:\s+[^<>]*?)?)/?>", re.DOTALL)
-    pin_re = re.compile(r'layoutDirection\s*=\s*"(ltr|rtl)"')
-    phys_re = re.compile(r"(?:android|app):(%s)\s*=" % "|".join(ATTR_RENAME))
+    # The tag is found by `iter_start_tags`, not by a regex: a layout holds
+    # several siblings that open with the same tag, and one regex match used to
+    # swallow the next element's attributes, so a pin could vanish.
+    pin_re = re.compile(r'(?<![\w.-])(?:android:|app:)?layoutDirection\s*=\s*"(ltr|rtl)"')
+    txt_re = re.compile(r'(?<![\w.-])(?:android:|app:)?textDirection\s*=\s*"(ltr|rtl)"')
+    phys_re = re.compile(r"(?<![\w.-])(?:android|app):(%s)\s*=" % "|".join(ATTR_RENAME))
     for f in sorted(res.glob("layout*/*.xml")):
         try:
             txt = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for m in elem.finditer(txt):
-            tag, body = m.group(1), m.group(2) or ""
-            pm = pin_re.search(body)
-            if not pm:
-                continue
+        for tag, body in iter_start_tags(txt):
             if 'orientation="horizontal"' not in body:
                 continue
             if not phys_re.search(body):
                 continue
-            out.append(("layoutDirection", f.relative_to(proj).as_posix(),
-                        tag, pm.group(1)))
+            for kind, rx in (("layoutDirection", pin_re), ("textDirection", txt_re)):
+                pm = rx.search(body)
+                if pm:
+                    out.append((kind, f.relative_to(proj).as_posix(),
+                                tag, pm.group(1)))
     return out
 
 
@@ -1461,6 +1471,47 @@ def rtl_drawable_dirs(proj):
                 break
     return out
 
+
+def iter_start_tags(txt):
+    """Yield (tag, body) for every start tag in an XML text.
+
+    A scanner, not a regular expression. `body` runs from just after the tag
+    name to the closing `>`, and a `>` inside a quoted value does not end it, so
+    `android:tag="a>b"` cannot cut a tag in half.
+
+    This replaced a regex. On CPython 3.14's `re` an alternation whose first
+    branch starts with a whitespace class silently stops repeating: `(?:\\s+[^<>]|
+    "[^"]*")*` matched only the first attribute, every later check saw a
+    truncated element, and the `DirectionPins` check found nothing at all. A
+    scanner has no such failure mode, so this walks the text once instead.
+    """
+    n, i = len(txt), 0
+    while True:
+        i = txt.find("<", i)
+        if i < 0:
+            return
+        if txt.startswith("</", i) or txt.startswith("<!", i) or txt.startswith("<?", i):
+            i += 2
+            continue
+        j, quote = i + 1, None
+        while j < n:
+            ch = txt[j]
+            if quote:
+                if ch == quote:
+                    quote = None
+            elif ch == chr(34) or ch == chr(39):
+                quote = ch
+            elif ch == ">":
+                break
+            j += 1
+        if j >= n:
+            return
+        body = txt[i + 1:j]
+        end = 0
+        while end < len(body) and not body[end].isspace() and body[end] != "/":
+            end += 1
+        yield body[:end], body[end:]
+        i = j + 1
 
 def count_legacy_attrs(proj):
     n = 0
@@ -1960,11 +2011,16 @@ def cmd_lint(args):
         if kind == "supportsRtl":
             add("error", where, 'android:supportsRtl="false" — the manifest opts out of '
                                 'RTL entirely; run `aqlab rtl`')
-        else:
+        elif kind == "layoutDirection":
             tag_, val = rest
             add("warn", f"{where}:<{tag_}>",
                 f'layoutDirection="{val}" pins a horizontal row that already sets '
                 f'left/right attrs — it will not flip in {args.locale}')
+        else:
+            tag_, val = rest
+            add("warn", f"{where}:<{tag_}>",
+                f'textDirection="{val}" pins the text of a row that already sets '
+                f'left/right attrs — it stays {val} in {args.locale}')
 
     # A `ldrtl` folder that mirrors nothing is not a translation problem, so it
     # is reported without the locale gate above — it costs the same in any RTL

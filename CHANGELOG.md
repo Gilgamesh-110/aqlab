@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`DirectionPins` now also catches `textDirection`.** `android:textDirection="ltr"`
+  (or `"rtl"`) on a horizontal row that already sets a left/right attribute
+  keeps the *text* pinned while the row flips — the same author mistake one level
+  down from a pinned `layoutDirection`. `firstStrong` (the platform default),
+  `anyRtl`, `locale` and `inherit` follow the direction and stay silent.
+  Measured on the real APK: no layout sets `textDirection`, so 0 new findings.
+### Fixed
+- **`DirectionPins` could miss pins entirely on real layouts.** The element
+  matcher was a single regex, and two siblings opening with the same tag
+  collapsed into one match whose body swallowed the next element's attributes,
+  so a pin could vanish and a finding could be attributed to the wrong row. It
+  also cut a tag in half when an attribute value held `>` (`android:tag="a>b"`).
+  Tags are now walked by `iter_start_tags`, a small scanner that keeps quoted
+  values whole. Re-checked on the real APK: still the same two Material pins,
+  both correctly silent because neither row carries a physical attribute.
+### Added
 - **`lint --fix` now repairs `RtlHardcoded` too.** The linter reported a
   physical `gravity` value and told the user to run a different command to
   repair it. `--fix` now rewrites the value to `start`/`end` (and
