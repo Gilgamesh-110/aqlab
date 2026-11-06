@@ -1069,6 +1069,56 @@ def test_lint_fix(tmp):
           and remaining[0][2] == "paddingLeft", str(remaining))
 
 
+HEAD = '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+
+
+def test_gravity_compound_token(tmp):
+    """RtlHardcoded reads the *value*, not a word boundary on the whole line.
+
+    Found on the real APK: `gravity="left|center"` in two Material selection
+    dialogs was reported, and the value was never rewritten — `aqlab rtl` used
+    `\b(left|right)\b`, and in Python `\b` is a boundary between a word char
+    and a non-word char, so the `left` in `left|center` has no closing boundary
+    (the pipe is a non-word char too). The report named a fix that could not
+    touch the file. Compound values are the common case, so the test is now a
+    token test: not preceded or followed by a letter.
+    """
+    root = Path(tmp) / "gravcompound"
+    res = root / "res"
+    layout = res / "layout"
+    layout.mkdir(parents=True)
+    (res / "values").mkdir()
+    (res / "values" / "strings.xml").write_text(
+        HEAD + '<string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+    f = layout / "sel.xml"
+    f.write_text(
+        HEAD +
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <CheckedTextView android:gravity="left|center"/>\n'
+        '    <TextView android:gravity="start|center_vertical"/>\n'
+        '    <TextView android:paddingLeft="4dp"/>\n'
+        '</LinearLayout>\n', encoding="utf-8")
+
+    got = A.hardcoded_gravity(root)
+    check("compound gravity flagged", [v for _, _, v in got] == ["left|center"], str(got))
+    check("slot-looking value not a side",
+          not A.GRAVITY_TOKEN_HIT.search("imageLeft"), "imageLeft")
+    check("compound still a side", bool(A.GRAVITY_TOKEN_HIT.search("left|center")), "")
+
+    check("symmetry fix ignores gravity", A.fix_symmetry(root, dry=False) == 0, "")
+    check("file untouched", 'left|center' in f.read_text(encoding="utf-8"), "")
+    migrated = A.migrate_attr("android:gravity", "left|center")
+    check("rtl rewrites compound token", migrated == ("android:gravity", "start|center"),
+          str(migrated))
+    check("rtl leaves textAlignment viewStart alone",
+          A.migrate_attr("android:textAlignment", "viewStart") is None, "")
+    check("rtl leaves a word holding the token alone",
+          A.migrate_attr("android:gravity", "leftShape") is None, "")
+
+
 def test_direction_pins(tmp):
     """DirectionPins: a pin over physical attrs keeps a row LTR in Arabic.
 
@@ -1661,6 +1711,7 @@ def main():
         test_symmetry_check(tmp)
         test_rtl_drawable_dirs(tmp)
         test_hardcoded_gravity(tmp)
+        test_gravity_compound_token(tmp)
         test_lint_fix(tmp)
         test_direction_pins(tmp)
         test_rtl(proj)

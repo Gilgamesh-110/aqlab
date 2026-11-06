@@ -88,6 +88,11 @@ GRAVITY_ATTRS = {"gravity", "layout_gravity", "foregroundGravity"}
 TEXT_ALIGN_ATTRS = {"textAlignment"}
 
 LEFT_TOKEN = {"left": "start", "right": "end"}
+# A whole token or a word inside a compound one. `leftShape` and `right_of`
+# are not gravity values, but `imageLeft`/`navRight` legitimately are (a custom
+# attr holding a layout slot), so a bare word boundary is the wrong test.
+GRAVITY_TOKEN = r"(?<![A-Za-z])(left|right)(?![A-Za-z])"
+GRAVITY_TOKEN_HIT = re.compile(GRAVITY_TOKEN)
 TEXT_ALIGN_TOKEN = {"left": "viewStart", "right": "viewEnd"}
 
 # Theme references that must follow the rename, or `paddingStart` would still
@@ -139,9 +144,9 @@ def migrate_attr(name, value):
     if local in ATTR_RENAME:
         new_local = ATTR_RENAME[local]
     elif local in GRAVITY_ATTRS:
-        new_val = re.sub(r"\b(left|right)\b", lambda g: LEFT_TOKEN[g.group(1)], value)
+        new_val = re.sub(GRAVITY_TOKEN, lambda g: LEFT_TOKEN[g.group(1)], value)
     elif local in TEXT_ALIGN_ATTRS:
-        new_val = re.sub(r"\b(left|right)\b", lambda g: TEXT_ALIGN_TOKEN[g.group(1)], value)
+        new_val = re.sub(GRAVITY_TOKEN, lambda g: TEXT_ALIGN_TOKEN[g.group(1)], value)
     new_val = map_theme_refs(new_val)
     if new_local == local and new_val == value:
         return None
@@ -224,7 +229,7 @@ def rewrite_styles(text):
             elif new_name:
                 edits.append((it.start(), it.end(), ""))  # twin already declared
             elif local in GRAVITY_ATTRS:
-                new_body = re.sub(r"\b(left|right)\b",
+                new_body = re.sub(GRAVITY_TOKEN,
                                   lambda g: LEFT_TOKEN[g.group(1)], it.group("body"))
                 if new_body != it.group("body"):
                     edits.append((it.start("body"), it.end("body"), new_body))
@@ -1330,8 +1335,10 @@ def hardcoded_gravity(proj):
             continue
         for m in attr_re.finditer(txt):
             attr, val = m.group(1), m.group(2)
-            tokens = {t.strip() for t in val.split("|")}
-            if not tokens & {"left", "right"}:
+            # `imageLeft` matches the old word-boundary test and is real (a
+            # selection-dialog row names its slot `imageLeft` in Material). What
+            # has to change is the token inside the value, so only that counts.
+            if not GRAVITY_TOKEN_HIT.search(val):
                 continue
             found.append((f.relative_to(proj).as_posix(), attr, val))
     return found
@@ -1558,7 +1565,7 @@ def symmetric_fix(body):
         if not m:
             return body          # reported but our regex lost it: do not guess
         target = ATTR_RENAME.get(miss_b, miss_b)
-        value = re.sub(r'\b(left|right)\b', lambda t: GRAVITY_RTL[t.group(1)],
+        value = re.sub(GRAVITY_TOKEN, lambda t: GRAVITY_RTL[t.group(1)],
                        m.group(1))
         # Right after the attribute it mirrors. Appending at the end of a 40-line
         # tag hides the pair where nobody looks; one long line stays one line.

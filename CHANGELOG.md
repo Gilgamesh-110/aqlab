@@ -32,8 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its pins are Material's `material_clock_display` and
   `material_timepicker_textinput_display`, and both are correctly ignored.
 
-### Planned
-- merge `diff` into `lint` for a single CI entry point
+### Fixed
+
+- **`aqlab rtl` never rewrote a compound gravity value.** `gravity="left|center"`
+  is the common form, and the token test was `(left|right)` — in Python a
+  `` only sits between a word char and a non-word char, and both sides of
+  `left` in `left|center` are non-word, so `fix` matched nothing while `lint`
+  reported the element. Measured on the real APK: both of its `RtlHardcoded`
+  findings were exactly this form, so the fix the warning pointed at was a
+  no-op. Now one `GRAVITY_TOKEN` (`(?<![A-Za-z])(left|right)(?![A-Za-z])`) drives
+  the linter, `migrate_attr` and the style repair, so the value the report names
+  is the value the fixer rewrites — `start|center` out. A word holding the token
+  (`leftShape`) stays untouched.
 
 ## [0.1.14] — 2026-11-06
 
