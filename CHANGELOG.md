@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lint --fix` repairs `pinNested`.** The pin itself is deliberate (a clock
+  face, a keypad), so the fixer does not remove it: it applies `aqlab rtl` to the
+  named row only, renaming the physical `paddingLeft`/`layout_marginRight` that
+  sits under the inherited direction. Idempotent, `--dry-run` aware, and it never
+  touches the ancestor pin or a row that sets its own direction.
 - **`DirectionPins` follows a pin into the children.** A direction set on a
   container is the resolved direction of every descendant that does not
   override it, so a pinned `<LinearLayout>` whose child rows carry `paddingLeft`
@@ -26,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `anyRtl`, `locale` and `inherit` follow the direction and stay silent.
   Measured on the real APK: no layout sets `textDirection`, so 0 new findings.
 ### Fixed
+- **`DirectionPins` leaked a pin past its container.** A self-closed element's
+  pin was pushed onto the scope stack, and every later sibling at the same depth
+  was then reported as inheriting a direction no ancestor set — measured on the
+  round-9 fixture, which counted 5 inherited rows where only 3 exist. The pin now
+  ends where its element does.
 - **`DirectionPins` could miss pins entirely on real layouts.** The element
   matcher was a single regex, and two siblings opening with the same tag
   collapsed into one match whose body swallowed the next element's attributes,

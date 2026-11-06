@@ -85,6 +85,58 @@ def test_escape():
     check("format survives", A.escape_android("hi %1$s") == "hi %1$s")
 
 
+def test_lint_fix_pin_nested(tmp):
+    """`lint --fix` migrates the physical attributes of a row that only inherits
+    its direction, and never touches the pin or its siblings.
+
+    The pin belongs to an ancestor and is usually deliberate (a clock face). The
+    defect is the physical `paddingLeft` underneath it, so the fixer is `aqlab
+    rtl` scoped to that row — not a pin removal, which would relayout a screen
+    nobody complained about.
+
+    Found while wiring it: a self-closed element pinned the direction and the
+    pin then leaked onto the following siblings, which sit outside it.
+    """
+    root = Path(tmp) / "pinfix"
+    res = root / "res" / "layout"
+    res.mkdir(parents=True)
+    f = res / "clock.xml"
+    f.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<LinearLayout android:layoutDirection="ltr" android:orientation="horizontal">'
+        '<LinearLayout android:paddingLeft="4.0dip"/>'
+        '<TextView android:textDirection="rtl" android:text="x"/>'
+        '<LinearLayout android:layoutDirection="locale" android:paddingLeft="9.0dip"/>'
+        '<LinearLayout android:paddingRight="2.0dip"/>'
+        '</LinearLayout>'
+        '<LinearLayout android:paddingLeft="7.0dip"/>'
+        '</LinearLayout>', encoding="utf-8")
+
+    def pins():
+        return [g for g in A.direction_pins(root) if g[0] == "pinNested"]
+    # A self-closed pin must not leak onto its following siblings: only the two
+    # rows actually inside the pinned container inherit ltr.
+    check("self-closed pin does not leak onto siblings", len(pins()) == 2, str(pins()))
+
+    before = f.read_text(encoding="utf-8")
+    check("pin dry-run counts but writes nothing",
+          A.fix_pin_nested(root, dry=True) == 2
+          and f.read_text(encoding="utf-8") == before)
+
+    check("fixer migrates both inherited rows", A.fix_pin_nested(root) == 2)
+    after = f.read_text(encoding="utf-8")
+    check("inherited row padding renamed", 'android:paddingStart="4.0dip"' in after, after)
+    check("inherited row paddingRight renamed", 'android:paddingEnd="2.0dip"' in after, after)
+    check("the pin itself is left alone",
+          'android:layoutDirection="ltr"' in after and 'android:textDirection="rtl"' in after)
+    check("row setting its own direction untouched",
+          'android:layoutDirection="locale" android:paddingLeft="9.0dip"' in after, after)
+    check("sibling outside the pin untouched",
+          'android:paddingLeft="7.0dip"' in after, after)
+    check("pin fix idempotent", A.fix_pin_nested(root) == 0 and not pins())
+
+
 def test_rtl(proj):
     changes = A.patch_rtl(proj)
     man = (proj / "AndroidManifest.xml").read_text(encoding="utf-8")
@@ -1341,9 +1393,13 @@ def test_direction_pins(tmp):
           and all(g[3] == "rtl" for g in rows), str(rows))
     check("child pinning `locale` is left silent",
           not any(g[2] == "LinearLayout" and g[3] == "locale" for g in nest), str(nest))
-    # The pin's holder closes before the sibling row: nothing after it inherits.
-    check("exactly four inherited rows",
-          len([g for g in nest if g[0] == "pinNested"]) == 5, str(nest))
+    # The pin's holder closes before the sibling rows, so nothing after it
+    # inherits. This used to read 5: the pin was kept on the stack past its own
+    # closing tag, so two rows outside the container were reported as inheriting
+    # a direction only the container ever set. The real count is 3 — the
+    # `paddingLeft` row, the `paddingLeft` row that wraps a child, and that child.
+    check("exactly three inherited rows",
+          len([g for g in nest if g[0] == "pinNested"]) == 3, str(nest))
 
 
 def test_scaffold_apply(proj, tmp):
@@ -1870,6 +1926,7 @@ def main():
         test_gravity_compound_token(tmp)
         test_lint_fix_gravity(tmp)
         test_lint_fix(tmp)
+        test_lint_fix_pin_nested(tmp)
         test_direction_pins(tmp)
         test_rtl(proj)
         test_lint(proj)

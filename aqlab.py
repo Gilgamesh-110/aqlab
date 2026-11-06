@@ -1478,7 +1478,11 @@ def direction_pins(proj):
             continue
         pinned = []  # [(depth, tag, value)] still in scope
         for tag, body, depth, self_closing in walk_layout(txt):
-            while pinned and pinned[-1][0] > depth:
+            # `>=`, not `>`: the pin belongs to an element that closed as soon as a
+            # new start tag appears at the same depth — its sibling is outside it,
+            # so the pin must not reach it. Measured: a pinned row's following
+            # sibling was reported as inheriting a direction nobody set on it.
+            while pinned and pinned[-1][0] >= depth:
                 pinned.pop()
             # `locale` is the platform default spelled out, not a pin.
             local = None
@@ -1490,7 +1494,12 @@ def direction_pins(proj):
             if local:
                 while pinned and pinned[-1][0] >= depth:
                     pinned.pop()
-                pinned.append((depth, tag, local[1]))
+                # A self-closed row encloses nothing: pushing it would leak the
+                # pin onto its following siblings, which are outside it. Found
+                # by a `<TextView ... />` pin whose next sibling row was reported
+                # as inheriting a direction that no ancestor set.
+                if not self_closing:
+                    pinned.append((depth, tag, local[1]))
             # A row is horizontal when it says so, or when it is a
             # `LinearLayout`/`RadioGroup`/`TableRow` that left the orientation to
             # the default — horizontal for all three. A bare `<include>` counts
@@ -2177,6 +2186,7 @@ def cmd_lint(args):
     if getattr(args, "fix", False):
         fixed = fix_symmetry(proj, dry=getattr(args, "dry_run", False))
         fixed += fix_gravity(proj, dry=getattr(args, "dry_run", False))
+        fixed += fix_pin_nested(proj, dry=getattr(args, "dry_run", False))
         if fixed:
             print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
                   f"{fixed} element(s)")
@@ -2216,6 +2226,68 @@ def gravity_fix(text):
 
     hit_re = re.compile(r'((?:\b|:)(?:gravity|layout_gravity|foregroundGravity|textAlignment)\s*=\s*")([^"]*)"')
     return hit_re.sub(one, text), hits[0]
+
+
+ANY_DIR_RE = re.compile(r'(?<![\w.-])(?:android:|app:)?(?:layout|text)Direction\s*=')
+
+
+def fix_pin_nested(proj, dry=False):
+    """Migrate the physical attributes of every row `direction_pins` named
+    `pinNested`.
+
+    The pin itself is not the defect — it sits on an ancestor and is usually a
+    deliberate design (a clock face, a keypad). What makes the row a finding is
+    the physical `paddingLeft`/`layout_marginRight` underneath it: those keep
+    pointing one way while the inherited pin keeps the row one way too. Removing
+    the pin would change a layout nobody complained about; renaming the physical
+    attribute to `start`/`end` fixes the row and leaves the pin to do its job.
+
+    So the fixer is `aqlab rtl` applied to the named row only, and the row's
+    reported physical attribute is the one that changes. Returns rows changed;
+    idempotent because `migrate_attr` returns `None` for a start/end name.
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return 0
+    broken = {}
+    for kind, path, tag, _val in direction_pins(proj):
+        if kind == "pinNested":
+            broken.setdefault(path, []).append(tag)
+    n = 0
+    for rel, wanted in sorted(broken.items()):
+        f = Path(proj) / rel
+        try:
+            txt = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Two rows in one file are reported separately but can sit in the same
+        # walk, so `wanted` is consumed by index and only by a row the migrator
+        # actually changed: a row whose only physical attribute was already
+        # migrated stays in the queue instead of swallowing the next one's slot.
+        out, i, done = [], 0, 0
+        for tag, body, _depth, _sc in walk_layout(txt):
+            if not wanted:
+                break
+            pos = txt.find(body, i)
+            # A row that sets its own direction breaks the chain, so it is never
+            # `pinNested` and must not consume the next reported row's slot —
+            # found by a `layoutDirection="locale"` row sitting between two real
+            # ones and taking the first one's place.
+            if pos < 0 or tag != wanted[0] or ANY_DIR_RE.search(body):
+                continue
+            fixed, hits = rewrite_xml_attrs("<x" + body + ">")
+            if not hits:
+                continue
+            wanted.pop(0)
+            out.append(txt[i:pos] + fixed[2:-1])
+            i = pos + len(body)
+            done += 1
+        if done:
+            out.append(txt[i:])
+            if not dry:
+                f.write_text("".join(out), encoding="utf-8")
+            n += done
+    return n
 
 
 def fix_gravity(proj, dry=False):
