@@ -1396,6 +1396,65 @@ def direction_pins(proj):
     return out
 
 
+def rtl_drawable_dirs(proj):
+    """`res/drawable-ldrtl-*` folders that mirror nothing.
+
+    A `ldrtl` qualifier is only meaningful if the file inside differs from the
+    one the LTR build picks. Aapt happily merges an identical copy, so the build
+    stays green while the author's intent ("this icon flips") is silently lost —
+    either the folder was scaffolded and never filled, or a file was copied in
+    unchanged instead of redrawn.
+
+    Two conditions, both cheap and both certain:
+      * the folder holds no drawable at all (empty, or only leftover `.gitkeep`)
+      * a file is byte-identical to the same-named file in the unqualified peer
+        directory — `drawable-ldrtl-xxhdpi` is compared against
+        `drawable-xxhdpi` first, then against `drawable`
+
+    Skipping honest cases is deliberate: a file with no LTR counterpart at all
+    (ldrtl-only, e.g. a mirrored spinner Android ships that way) is not touched,
+    and a `.9.png` that differs in any byte passes. Measured on a real APK:
+    `drawable-ldrtl-xxhdpi` holds one apktool-decoded Material spinner with no
+    twin, so it stays silent.
+
+    Returns [(path, kind, detail)] with kind "empty" or "identical".
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return []
+    out = []
+    # Only the two resource types that are drawables. `values-ldrtl` is a
+    # different story (strings) and mirroring geometry is not what it means.
+    for d in sorted(res.glob("drawable*-ldrtl*")) + sorted(res.glob("mipmap*-ldrtl*")):
+        if not d.is_dir():
+            continue
+        files = [f for f in d.iterdir()
+                 if f.is_file() and not f.name.startswith(".")]
+        rel = d.relative_to(proj).as_posix()
+        if not files:
+            out.append((rel, "empty", ""))
+            continue
+        # drawable-ldrtl-xxhdpi -> ("drawable", "-xxhdpi"); the pre-qualifier is
+        # plain string surgery, not a parsing problem, and both halves are
+        # exactly what reconstructs the peer directory name.
+        head = d.name.split("-ldrtl")[0]
+        tail = d.name.split("-ldrtl", 1)[1]
+        peers = [res / f"{head}{tail}", res / head]
+        for f in sorted(files):
+            for peer in peers:
+                twin = peer / f.name
+                if not twin.is_file():
+                    continue
+                try:
+                    if f.read_bytes() == twin.read_bytes():
+                        out.append((f"{rel}/{f.name}", "identical",
+                                    peer.relative_to(proj).as_posix()))
+                except OSError:
+                    pass
+                break
+    return out
+
+
 def count_legacy_attrs(proj):
     n = 0
     res = Path(proj) / "res"
@@ -1899,6 +1958,17 @@ def cmd_lint(args):
             add("warn", f"{where}:<{tag_}>",
                 f'layoutDirection="{val}" pins a horizontal row that already sets '
                 f'left/right attrs — it will not flip in {args.locale}')
+
+    # A `ldrtl` folder that mirrors nothing is not a translation problem, so it
+    # is reported without the locale gate above — it costs the same in any RTL
+    # language and the author meant it to flip.
+    for where, kind, detail in rtl_drawable_dirs(proj):
+        if kind == "empty":
+            add("warn", where, "ldrtl folder is empty — it mirrors nothing; fill it "
+                               "or delete it so the build stops looking RTL-ready")
+        else:
+            add("warn", where, f"byte-identical to {detail}/ — an unchanged copy does "
+                               f"not mirror; redraw it or delete it")
 
     print(f"[FINDING] lint res/values-{args.locale}: {covered}/{len(src)} translated ({cov:.1f}%)")
     # Per file only when there is more than one, so the common case stays one line.

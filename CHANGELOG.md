@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`RtlDrawableDirs`.** A `drawable-ldrtl*` / `mipmap-ldrtl*` folder that
+  mirrors nothing: empty (or only a `.gitkeep`), or holding a file that is
+  byte-identical to the same-named file in the unqualified peer directory.
+  Aapt merges that copy without complaint, so the build stays green while the
+  author's intent is lost. An `ldrtl`-only file with no LTR twin is a
+  legitimate mirror and stays silent (measured: the real APK's
+  `drawable-ldrtl-xxhdpi` holds one such spinner, 0 findings).
 - **`lint --fix`.** Fills a missing `paddingStart` / `paddingEnd` /
   `layout_marginStart` / `layout_marginEnd` partner on views that already use
   the modern spellings, copying the value from the side that exists. Idempotent

@@ -891,6 +891,61 @@ def test_symmetry_check(tmp):
           text[:500])
 
 
+def test_rtl_drawable_dirs(tmp):
+    """ldrtl folders that mirror nothing: empty, or a copy of the LTR file.
+
+    The real-APK baseline (one Material spinner in `drawable-ldrtl-xxhdpi` with
+    no LTR twin) must stay silent — an ldrtl-only file is a legitimate mirror.
+    """
+    root = Path(tmp) / "ldrtl"
+    res = root / "res"
+    for d in ("values", "values-ar", "layout",
+              "drawable-xxhdpi", "drawable-ldrtl-xxhdpi",
+              "drawable-ldrtl", "drawable", "mipmap-ldrtl-hdpi"):
+        (res / d).mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+    for d in ("values", "values-ar"):
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+
+    # identical copy of the xxhdpi file -> the author changed nothing
+    (res / "drawable-xxhdpi" / "icon.png").write_bytes(b"PNG-LTR")
+    (res / "drawable-ldrtl-xxhdpi" / "icon.png").write_bytes(b"PNG-LTR")
+    # a real mirror: different bytes, must stay silent
+    (res / "drawable-xxhdpi" / "arrow.png").write_bytes(b"ARROW-LTR")
+    (res / "drawable-ldrtl-xxhdpi" / "arrow.png").write_bytes(b"ARROW-RTL")
+    # ldrtl-only file with no LTR twin -> legitimate, silent
+    (res / "drawable-ldrtl" / "only_rtl.png").write_bytes(b"ONLY")
+    # unqualified fallback peer is checked when the density dir has no twin
+    (res / "drawable" / "plain.png").write_bytes(b"PLAIN")
+    (res / "drawable-ldrtl" / "plain.png").write_bytes(b"PLAIN")
+    # empty mipmap-ldrtl folder, only a .gitkeep
+    (res / "mipmap-ldrtl-hdpi" / ".gitkeep").write_text("", encoding="utf-8")
+
+    got = A.rtl_drawable_dirs(root)
+    kinds = {(p, k) for p, k, _ in got}
+    names = " ".join(p for p, _, _ in got)
+    check("identical copy flagged", "drawable-ldrtl-xxhdpi/icon.png" in names, str(got))
+    check("real mirror silent", "arrow.png" not in names, str(got))
+    check("ldrtl-only silent", "only_rtl.png" not in names, str(got))
+    check("fallback peer flagged", "drawable-ldrtl/plain.png" in names, str(got))
+    check("empty folder flagged", "res/mipmap-ldrtl-hdpi" in names, str(got))
+    check("empty is its own kind", ("res/mipmap-ldrtl-hdpi", "empty") in kinds, str(got))
+    check("exactly three findings", len(got) == 3, str(got))
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar", quiet=True,
+                                      verbose=False, fail_under=None,
+                                      fail_under_file=None))
+    text = out.getvalue()
+    check("lint reports empty ldrtl", "ldrtl folder is empty" in text, text[-600:])
+    check("lint reports identical copy", "byte-identical to" in text, text[-600:])
+
+
 def test_hardcoded_gravity(tmp):
     """RtlHardcoded: a physical side in a gravity value ignores the locale.
 
@@ -1604,6 +1659,7 @@ def main():
         test_diff_between_apks(tmp)
         test_xliff_wrapping(tmp)
         test_symmetry_check(tmp)
+        test_rtl_drawable_dirs(tmp)
         test_hardcoded_gravity(tmp)
         test_lint_fix(tmp)
         test_direction_pins(tmp)
