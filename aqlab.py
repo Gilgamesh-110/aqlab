@@ -1229,6 +1229,13 @@ def scan_project(proj, args):
     print(f"  supportsRtl    : {'yes' if rtl_on else 'NO — run `aqlab rtl`'}")
     print(f"  translatable   : {sum(1 for e in entries if e.translatable)}")
     print(f"  legacy L/R     : {lefts} attribute(s) still left/right — run `aqlab rtl`")
+    sym = symmetry_problems(proj)
+    if sym:
+        print(f"  asymmetric     : {len(sym)} side(s) set without the opposite — "
+              f"offsets off-centre when the layout flips")
+    grav = hardcoded_gravity(proj)
+    if grav:
+        print(f"  hardcoded grav : {len(grav)} value(s) pin text to a physical side")
     vec = text_like_vectors(proj)
     if vec:
         print(f"  text vectors   : {len(vec)} — Latin glyphs baked into geometry, check by eye")
@@ -1286,6 +1293,41 @@ def text_like_vectors(proj):
     return out
 
 
+def hardcoded_gravity(proj):
+    """`gravity`/`textAlignment` values that pin text to a physical side.
+
+    Android's `RtlHardcoded` check. `gravity="left"` is a left edge in every
+    locale, so Arabic gets a paragraph hugging the wrong margin — unlike
+    `paddingLeft`, it is not renamed by `aqlab rtl` silently, it is a value that
+    has to be read.
+
+    Returns [(path, attr, value)] and never rewrites anything: a value like
+    `left|bottom` needs its tokens translated, not its attribute renamed, and
+    guessing which token the author meant is how a tool breaks a layout.
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return []
+    found = []
+    attr_re = re.compile(r'\b(?:android:)?(gravity|layout_gravity|foregroundGravity|'
+                         r'textAlignment)\s*=\s*"([^"]*)"')
+    for f in sorted(res.glob("**/*.xml")):
+        if not any(part.startswith(("layout", "values", "menu", "anim"))
+                   for part in f.relative_to(res).parts[:1]):
+            continue
+        try:
+            txt = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in attr_re.finditer(txt):
+            attr, val = m.group(1), m.group(2)
+            tokens = {t.strip() for t in val.split("|")}
+            if not tokens & {"left", "right"}:
+                continue
+            found.append((f.relative_to(proj).as_posix(), attr, val))
+    return found
+
+
 def count_legacy_attrs(proj):
     n = 0
     res = Path(proj) / "res"
@@ -1298,6 +1340,58 @@ def count_legacy_attrs(proj):
         except OSError:
             pass
     return n
+
+
+# Android's own `RtlSymmetry` check. Padding or margin on one side without the
+# other is not an error a compiler sees — it renders as an off-centre list or a
+# title jammed against one edge once the layout flips. Google's rule, verified
+# against the lint docs: if paddingLeft is set, paddingRight probably should be.
+SYMMETRY_PAIRS = (
+    ("paddingLeft", "paddingRight", "padding"),
+    ("paddingStart", "paddingEnd", "padding"),
+    ("layout_marginLeft", "layout_marginRight", "margin"),
+    ("layout_marginStart", "layout_marginEnd", "margin"),
+)
+
+
+def symmetry_problems(proj):
+    """Elements with one side's padding/margin set and the other missing.
+
+    Scans element-by-element rather than file-wide: the pair has to be missing
+    from the *same* view, and a file with paddingLeft on one row and paddingRight
+    on another is not symmetric in any useful sense.
+
+    left/right and start/end are independent pairs, and an element carrying both
+    spellings is not asymmetric — that is the correct shape when minSdk is below
+    17, where start/end are ignored on old platforms. Measured on a real APK: an
+    ImageView with paddingLeft+paddingStart and marginRight+marginEnd was
+    reported twice before this, and duplicate warnings are how a check gets
+    ignored. Within one spelling, a side without its partner is the real finding.
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return []
+    found = []
+    elem = re.compile(r"<([A-Za-z][\w.]*)\b([^>]*?)/?>", re.DOTALL)
+    for f in sorted(list(res.glob("layout*/*.xml")) + list(res.glob("menu*/*.xml"))):
+        try:
+            txt = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in elem.finditer(txt):
+            tag, body = m.group(1), m.group(2)
+            have = {}
+            for a in re.finditer(r'\b(?:android:)?([\w.]+)\s*=\s*"([^"]*)"', body):
+                have[a.group(1)] = a.group(2)
+            for left, right, _kind in SYMMETRY_PAIRS:
+                # both spellings of the same pair covered -> nothing to say
+                if left in have and right not in have:
+                    found.append((f.relative_to(proj).as_posix(), tag, left, right,
+                                  have[left]))
+                elif right in have and left not in have:
+                    found.append((f.relative_to(proj).as_posix(), tag, right, left,
+                                  have[right]))
+    return found
 
 
 def scan_apk(apk, args):
@@ -1665,6 +1759,19 @@ def cmd_lint(args):
     for pth, n, w, h in text_like_vectors(proj):
         add("warn", pth, f"{n} paths at {w}x{h}dp — looks like lettering baked into "
                          f"geometry; it will not mirror with the UI, check it by eye")
+
+    # Android's RtlSymmetry: one side without the other renders off-centre once
+    # the layout flips, and nothing in the build says so.
+    for path, tag, have_a, missing_b, value in symmetry_problems(proj):
+        add("warn", f"{path}:<{tag}>",
+            f"{have_a}=\"{value}\" without {missing_b} — not symmetric when the "
+            f"layout flips")
+
+    # RtlHardcoded: a physical side in a gravity value does not follow the
+    # locale, so it has to be renamed by hand — say where.
+    for path, attr, value in hardcoded_gravity(proj):
+        add("warn", f"{path}:{attr}", f'"{value}" pins text to a physical side; '
+                                      f'run `aqlab rtl` to rewrite it to start/end')
 
     print(f"[FINDING] lint res/values-{args.locale}: {covered}/{len(src)} translated ({cov:.1f}%)")
     # Per file only when there is more than one, so the common case stays one line.

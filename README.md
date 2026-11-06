@@ -51,8 +51,8 @@ python aqlab.py lint  examples/demo-project
 
 ```
 [PATCH] AndroidManifest.xml: android:supportsRtl="true"
-[PATCH] res/layout/activity_main.xml: 11 attribute(s)
-[PATCH] res/layout/list_item.xml: 6 attribute(s)
+[PATCH] res/layout/activity_main.xml: 13 attribute(s)
+[PATCH] res/layout/list_item.xml: 7 attribute(s)
 [PATCH] res/values/styles.xml: 2 attribute(s)
 [DONE] 4 file(s) updated
 [DONE] 12 translation(s) -> examples/demo-project/res/values-ar/strings.xml

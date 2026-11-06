@@ -819,6 +819,131 @@ def test_xliff_wrapping(tmp):
           out2.getvalue()[:200])
 
 
+def test_symmetry_check(tmp):
+    """RtlSymmetry: one side set without its partner puts the layout off-centre.
+
+    Android's own check, verified against the lint docs. The subtlety is that
+    left/right and start/end are *independent pairs*: a view with
+    paddingLeft+paddingStart and paddingRight but no paddingEnd has covered its
+    start side twice and still left the end side half-done, so both findings are
+    real. Measured on a real APK first — the first version aliased the spellings
+    together and reported the same view twice, which is how a check earns being
+    ignored.
+    """
+    root = Path(tmp) / "sym"
+    res = root / "res"
+    for d in ("values", "values-ar", "layout"):
+        (res / d).mkdir(parents=True)
+    for d in ("values", "values-ar"):
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+
+    (res / "layout" / "main.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"\n'
+        '    android:layout_width="match_parent" android:layout_height="match_parent">\n'
+        '    <TextView android:id="@+id/one_side"\n'
+        '        android:paddingLeft="16dp"\n'
+        '        android:layout_width="wrap_content" android:layout_height="wrap_content"/>\n'
+        '    <TextView android:id="@+id/balanced"\n'
+        '        android:paddingLeft="16dp" android:paddingRight="16dp"\n'
+        '        android:layout_width="wrap_content" android:layout_height="wrap_content"/>\n'
+        '    <TextView android:id="@+id/modern_balanced"\n'
+        '        android:paddingStart="8dp" android:paddingEnd="8dp"\n'
+        '        android:layout_width="wrap_content" android:layout_height="wrap_content"/>\n'
+        '    <TextView android:id="@+id/all_four"\n'
+        '        android:paddingLeft="8dp" android:paddingStart="8dp"\n'
+        '        android:paddingRight="8dp" android:paddingEnd="8dp"\n'
+        '        android:layout_width="wrap_content" android:layout_height="wrap_content"/>\n'
+        '</LinearLayout>\n', encoding="utf-8")
+
+    got = A.symmetry_problems(root)
+    tags = [(t, a, b) for _, t, a, b, _ in got]
+    check("one_side flagged", ("TextView", "paddingLeft", "paddingRight") in tags, str(tags))
+    check("balanced not flagged", len(got) == 1, str(tags))
+    check("both spellings not flagged", not any(
+        "all_four" in str(x) for x in tags), str(tags))
+
+    # an element carrying both spellings but missing one partner is still real
+    (res / "layout" / "main.xml").unlink()
+    (res / "layout" / "mixed.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<ImageView xmlns:android="http://schemas.android.com/apk/res/android"\n'
+        '    android:paddingLeft="12dp" android:paddingStart="12dp"\n'
+        '    android:paddingRight="12dp"\n'
+        '    android:layout_width="wrap_content" android:layout_height="wrap_content"/>\n',
+        encoding="utf-8")
+    got2 = A.symmetry_problems(root)
+    pairs = {(a, b) for _, _, a, b, _ in got2}
+    check("missing paddingEnd still reported", ("paddingStart", "paddingEnd") in pairs,
+          str(pairs))
+    check("paddingLeft satisfied by paddingRight", ("paddingLeft", "paddingRight") not in pairs,
+          str(pairs))
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar", quiet=True,
+                                      verbose=False, fail_under=None,
+                                      fail_under_file=None))
+    text = out.getvalue()
+    check("lint reports it as a warning", "[WARN]" in text and "not symmetric" in text,
+          text[:500])
+
+
+def test_hardcoded_gravity(tmp):
+    """RtlHardcoded: a physical side in a gravity value ignores the locale.
+
+    `center`, `start`, `end`, `viewStart` and `viewEnd` are direction-aware and
+    must not be reported — a check that flags `gravity="center"` teaches people
+    to stop reading its output.
+    """
+    root = Path(tmp) / "grav"
+    res = root / "res"
+    for d in ("values", "values-ar", "layout"):
+        (res / d).mkdir(parents=True)
+    for d in ("values", "values-ar"):
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            '<string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+    (res / "layout" / "t.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"\n'
+        '    android:layout_width="match_parent" android:layout_height="match_parent">\n'
+        '    <TextView android:gravity="center"/>\n'
+        '    <TextView android:gravity="start|center_vertical"/>\n'
+        '    <TextView android:gravity="end"/>\n'
+        '    <TextView android:textAlignment="viewStart"/>\n'
+        '    <TextView android:textAlignment="viewEnd"/>\n'
+        '    <TextView android:gravity="left|bottom"/>\n'
+        '    <TextView android:layout_gravity="right"/>\n'
+        '</LinearLayout>\n', encoding="utf-8")
+
+    got = A.hardcoded_gravity(root)
+    check("only physical sides flagged", len(got) == 2, str(got))
+    values = {v for _, _, v in got}
+    check("left|bottom caught", "left|bottom" in values, str(values))
+    check("plain right caught", "right" in values, str(values))
+    check("center not flagged", not any(v == "center" for v in values), str(values))
+    check("start/end not flagged",
+          not any(v in ("start|center_vertical", "end") for v in values), str(values))
+    check("viewStart/viewEnd not flagged",
+          not any("view" in v.lower() for v in values), str(values))
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar", quiet=True,
+                                      verbose=False, fail_under=None,
+                                      fail_under_file=None))
+    check("lint warns with the fix", "aqlab rtl" in out.getvalue(), out.getvalue()[:400])
+
+
 def test_scaffold_apply(proj, tmp):
     rc = A.cmd_scaffold(argparse.Namespace(proj=str(proj), locale="ar", tsv=None,
                                           force=False, quiet=True))
@@ -1340,6 +1465,8 @@ def main():
         test_rtl_locales_beyond_arabic(tmp)
         test_diff_between_apks(tmp)
         test_xliff_wrapping(tmp)
+        test_symmetry_check(tmp)
+        test_hardcoded_gravity(tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)
