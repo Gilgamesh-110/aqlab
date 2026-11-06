@@ -7,6 +7,7 @@
 import argparse
 import contextlib
 import io
+import json
 import re
 import shutil
 import sys
@@ -657,6 +658,167 @@ def test_rtl_locales_beyond_arabic(tmp):
     check("he range is its own", "20, 30, 40" in text, text[:600])
 
 
+def test_diff_between_apks(tmp):
+    """`aqlab diff` compares string resources straight out of two APKs.
+
+    Parsed from `aapt2 dump resources` so neither APK is decoded — no 50-second
+    apktool run per side and no working copy. Text that did not change must not
+    be reported: it is the majority of any diff and would bury the real ones.
+    """
+    aapt2 = A.tool("aapt2")
+    if not aapt2:
+        print("  (skipped: aapt2 not found)")
+        return
+    aj = next(iter(sorted(Path("C:/Users/speed/android-sdk/platforms").glob(
+        "android-*/android.jar"), reverse=True)), None)
+    if not aj:
+        print("  (skipped: android.jar not found)")
+        return
+
+    def build(name, vals, ar):
+        root = Path(tmp) / name
+        (root / "res" / "values").mkdir(parents=True)
+        (root / "res" / "values-ar").mkdir(parents=True)
+        (root / "res" / "values" / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            + "".join(f'<string name="{k}">{v}</string>' for k, v in vals.items())
+            + "</resources>", encoding="utf-8")
+        (root / "res" / "values-ar" / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+            + "".join(f'<string name="{k}">{v}</string>' for k, v in ar.items())
+            + "</resources>", encoding="utf-8")
+        (root / "AndroidManifest.xml").write_text(
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+            ' package="com.d"><application android:label="keep"/></manifest>', encoding="utf-8")
+        zip_path = str(root) + ".zip"
+        A.run([aapt2, "compile", "--dir", str(root / "res"), "-o", zip_path], quiet=True)
+        apk = str(root) + ".apk"
+        A.run([aapt2, "link", "-o", apk, "-I", str(aj), "--manifest",
+               str(root / "AndroidManifest.xml"), zip_path], quiet=True)
+        return apk
+
+    old_apk = build("old", {"keep": "Same", "changing": "Before", "gone": "Bye"},
+                    {"keep": "واحد", "changing": "قبل", "gone": "راح"})
+    new_apk = build("new", {"keep": "Same", "changing": "After", "fresh": "New"},
+                    {"keep": "واحد", "changing": "بعد", "fresh": "جديد"})
+
+    old, new = A.apk_strings(old_apk), A.apk_strings(new_apk)
+    check("apk strings read", ("ar", "keep") in old and old[("ar", "keep")] == "واحد",
+          str(list(old.items())[:3]))
+
+    d = A.diff_strings(old, new)
+    check("added found", ("", "fresh") in d["added"] and ("ar", "fresh") in d["added"],
+          str(d["added"]))
+    check("removed found", ("", "gone") in d["removed"] and ("ar", "gone") in d["removed"],
+          str(d["removed"]))
+    check("changed found", ("", "changing") in d["changed"], str(d["changed"]))
+    check("unchanged never reported",
+          not any(n == "keep" for _, n in d["added"] + d["removed"] + d["changed"]))
+
+    ar_only = A.diff_strings(old, new, locale="ar")
+    check("locale filter: default excluded",
+          all(l == "ar" for l, _ in ar_only["added"] + ar_only["removed"] + ar_only["changed"]),
+          str(ar_only["added"]))
+    check("locale filter keeps count", ar_only["added_n"] == 1 and ar_only["removed_n"] == 1)
+
+    same = A.diff_strings(old, old)
+    check("identical has no findings",
+          not (same["added_n"] or same["removed_n"] or same["changed_n"]))
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = A.cmd_diff(argparse.Namespace(old=old_apk, new=new_apk, locale=None,
+                                           limit=40, json=False, quiet=True))
+    text = out.getvalue()
+    check("diff reports a change and exits 1", rc == 1, str(rc))
+    check("prints both sides of a change", "Before" in text and "After" in text, text[:600])
+    check("prints the marker", "~" in text and "+" in text and "-" in text, text[:600])
+
+    out2 = io.StringIO()
+    with contextlib.redirect_stdout(out2):
+        rc2 = A.cmd_diff(argparse.Namespace(old=old_apk, new=old_apk, locale=None,
+                                            limit=40, json=False, quiet=True))
+    check("identical exits 0", rc2 == 0, str(rc2))
+
+    out3 = io.StringIO()
+    with contextlib.redirect_stdout(out3):
+        A.cmd_diff(argparse.Namespace(old=old_apk, new=new_apk, locale=None,
+                                      limit=40, json=True, quiet=True))
+    payload = json.loads(out3.getvalue().splitlines()[-1])
+    check("json is valid and labelled",
+          "(default)|changing" in payload["changed"], str(payload["changed"]))
+
+
+def test_xliff_wrapping(tmp):
+    """`aqlab xliff` wraps specifiers so translators cannot reorder or drop them.
+
+    Verified with aapt2: the wrapped file compiles, links, and the resolved value
+    is the bare `%1$s` again — the tag is compile-time only. `%%` is a literal
+    percent and must not be wrapped; an existing `<xliff:g>` must not be
+    double-wrapped.
+    """
+    check("positional id from index",
+          A.apply_xliff("%2$d items") == '<xliff:g id="arg2">%2$d</xliff:g> items',
+          A.apply_xliff("%2$d items"))
+    check("sequential for bare specifiers",
+          A.apply_xliff("%s and %d") ==
+          '<xliff:g id="arg1">%s</xliff:g> and <xliff:g id="arg2">%d</xliff:g>',
+          A.apply_xliff("%s and %d"))
+    check("%% untouched", A.apply_xliff("50%% off") == "50%% off",
+          A.apply_xliff("50%% off"))
+    check("no specifier is a no-op", A.apply_xliff("نص عادي") == "نص عادي")
+
+    root = Path(tmp) / "xlif"
+    res = root / "res"
+    (res / "values").mkdir(parents=True)
+    (res / "values-ar").mkdir(parents=True)
+    (res / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<string name="a">x</string></resources>', encoding="utf-8")
+    ar = res / "values-ar" / "strings.xml"
+    ar.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+        '    <string name="welcome">مرحباً %1$s، لديك %2$d</string>\n'
+        '    <string name="pct">خصم 50%%</string>\n'
+        '    <string name="plain">لا متغيرات</string>\n'
+        '    <string name="done">مرحباً <xliff:g id="name">%1$s</xliff:g></string>\n'
+        '</resources>\n', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+
+    before = ar.read_bytes()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = A.cmd_xliff(argparse.Namespace(proj=str(root), locale="ar", quiet=True,
+                                            dry_run=True))
+    check("dry xliff rc", rc == 0)
+    check("dry xliff wrote nothing", ar.read_bytes() == before)
+    check("dry xliff says DRY", "[DRY]" in out.getvalue(), out.getvalue()[:200])
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        A.cmd_xliff(argparse.Namespace(proj=str(root), locale="ar", quiet=True))
+    text = ar.read_text(encoding="utf-8")
+    check("namespace added", "xmlns:xliff" in text, text[:200])
+    check("welcome wrapped twice", text.count('<xliff:g id="arg') == 2, text)
+    check("percent untouched", "خصم 50%%" in text)
+    check("plain untouched", "لا متغيرات" in text)
+    check("existing xliff not double-wrapped",
+          'id="name">%1$s' in text and text.count('id="arg1">%1$s') == 1, text)
+
+    import xml.etree.ElementTree as ET
+    doc = ET.fromstring(text)
+    gs = doc.findall(".//{urn:oasis:names:tc:xliff:document:1.2}g")
+    check("file is well-formed with xliff elements", len(gs) == 3, str(len(gs)))
+
+    # a second run must find nothing to do
+    out2 = io.StringIO()
+    with contextlib.redirect_stdout(out2):
+        A.cmd_xliff(argparse.Namespace(proj=str(root), locale="ar", quiet=True))
+    check("second run is a no-op", "already wrapped" in out2.getvalue(),
+          out2.getvalue()[:200])
+
+
 def test_scaffold_apply(proj, tmp):
     rc = A.cmd_scaffold(argparse.Namespace(proj=str(proj), locale="ar", tsv=None,
                                           force=False, quiet=True))
@@ -1176,6 +1338,8 @@ def main():
         test_non_resource_files_are_reported(tmp)
         test_coverage_per_file_and_gates(tmp)
         test_rtl_locales_beyond_arabic(tmp)
+        test_diff_between_apks(tmp)
+        test_xliff_wrapping(tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)

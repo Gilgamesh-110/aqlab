@@ -31,7 +31,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.13"
+__version__ = "0.1.14"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -1342,6 +1342,192 @@ def scan_apk(apk, args):
     return 0
 
 
+def apk_strings(apk):
+    """`{(locale, name): value}` straight out of a compiled APK.
+
+    `aapt2 dump resources` prints the resolved value per configuration, so two
+    APKs can be compared without decoding either one — no 50-second apktool run
+    per side, and no working copy to clean up.
+
+    The locale is `""` for the default configuration. A value that aapt2 could
+    not resolve (a reference to another resource) comes back as `@0x…` and is
+    skipped: it says nothing about the text and would show up as a change on
+    every single diff.
+    """
+    aapt2 = tool("aapt2")
+    out = run([aapt2, "dump", "resources", str(apk)], quiet=True, check=False).stdout
+    table = {}
+    cur = None
+    for line in out.splitlines():
+        m = re.match(r"\s*resource 0x[0-9a-fA-F]+ (\w+)/(\S+)", line)
+        if m:
+            kind, name = m.group(1), m.group(2)
+            cur = name if kind == "string" else None
+            continue
+        if cur is None:
+            continue
+        m = re.match(r'\s*\(([^)]*)\)\s*"(.*)"\s*$', line)
+        if m:
+            loc, val = m.group(1), m.group(2)
+            # `(ar)` for a locale, `()` for the default configuration; a
+            # qualifier like `(ar-night)` is not a locale and is ignored.
+            if loc and not re.match(r"^[a-z]{2,3}(-r[A-Z]{2})?$", loc):
+                continue
+            if val.startswith("@"):
+                continue
+            table[(loc, cur)] = val
+        elif not line.startswith(" "):
+            cur = None
+    return table
+
+
+def diff_strings(old, new, locale=None, limit=40):
+    """Added / removed / changed string resources between two APK tables.
+
+    Returns a dict of lists so the caller can print, count or gate on them.
+    A resource present in both but pointing at the same text is not a change —
+    identical text is the majority of every diff and would bury the real ones.
+    """
+    def for_locale(table):
+        return {(loc, name): val for (loc, name), val in table.items()
+                if locale is None or loc == locale}
+
+    a, b = for_locale(old), for_locale(new)
+    added = sorted(k for k in b if k not in a)
+    removed = sorted(k for k in a if k not in b)
+    changed = sorted(k for k in a if k in b and a[k] != b[k])
+    return {"added": added, "removed": removed, "changed": changed,
+            "added_n": len(added), "removed_n": len(removed), "changed_n": len(changed)}
+
+
+def apply_xliff(text):
+    """Wrap each format specifier in `<xliff:g>`, so a translator cannot touch it.
+
+    `<xliff:g id="…">%1$s</xliff:g>` tells translation tooling that the content is
+    a placeholder rather than words. A specifier left bare gets reordered,
+    pluralised or dropped by a machine translator, and the app then crashes at
+    `String.format` with an argument mismatch — one of the most common
+    localisation crashes there is.
+
+    Verified with aapt2: the tag compiles, links, and resolves back to the bare
+    `%1$s`, so wrapping changes nothing at runtime.
+
+    An id is required by the schema. `argN` is positional, taken from the
+    specifier's own index where it has one (`%2$d` → `arg2`) so the ids stay
+    stable across a re-translation instead of shifting with word order.
+    `%%` is a literal percent, not a placeholder, and is left alone.
+    """
+    counter = [0]
+
+    def wrap(m):
+        spec = m.group(0)
+        if spec == "%%":
+            return spec
+        pos = re.match(r"%(\d+)\$", spec)
+        if pos:
+            name = f"arg{pos.group(1)}"
+        else:
+            counter[0] += 1
+            name = f"arg{counter[0]}"
+        return f'<xliff:g id="{name}">{spec}</xliff:g>'
+    return RE_FORMAT.sub(wrap, text)
+
+
+def has_xliff(text):
+    return "<xliff:g" in text
+
+
+def cmd_xliff(args):
+    """`aqlab xliff <dir>` — wrap format specifiers across a locale folder."""
+    proj = Path(args.proj)
+    res = proj / "res"
+    if not res.is_dir():
+        raise Fail(f"{res} not found — is this a decoded project?")
+    locale = args.locale
+    targets = sorted((res / f"values-{locale}").glob("*.xml")) if locale else []
+    if not targets:
+        raise Fail(f"no res/values-{locale}/*.xml — run `scaffold` first")
+
+    sink = Writes(dry=getattr(args, "dry_run", False))
+    total = files = 0
+    for f in targets:
+        raw = f.read_text(encoding="utf-8", errors="replace")
+        body = raw
+        # only the text between tags; attribute values are never specifiers
+        def fix(m):
+            nonlocal total
+            inner = m.group(2)
+            if has_xliff(inner) or not _formats(inner):
+                return m.group(0)
+            new = apply_xliff(inner)
+            total += new.count("<xliff:g")
+            return m.group(1) + new + m.group(3)
+        body = re.sub(r"(<(?:string|item)\b[^>]*>)(.*?)(</(?:string|item)>)",
+                      fix, body, flags=re.DOTALL)
+        if body != raw:
+            if "<xliff:g" in body and "xmlns:xliff" not in body:
+                # the namespace has to be declared or the file is not well-formed
+                body = re.sub(r"<resources(\s|>)",
+                              r'<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2"\1',
+                              body, count=1)
+            sink.add(f, body)
+            files += 1
+
+    if not files:
+        print("[OK] every format specifier is already wrapped")
+        return 0
+    if sink.dry:
+        print(f"[DRY] would wrap {total} specifier(s) in {files} file(s)")
+        sink.report()
+        return 0
+    sink.commit()
+    print(f"[DONE] wrapped {total} specifier(s) in {files} file(s) -> res/values-{locale}")
+    return 0
+
+
+def cmd_diff(args):
+    for p in (args.old, args.new):
+        if not Path(p).exists():
+            raise Fail(f"{p} not found")
+    old, new = apk_strings(args.old), apk_strings(args.new)
+    if not old or not new:
+        raise Fail("no string resources found — is this an APK? "
+                   "a decoded project needs `lint`, not `diff`")
+    d = diff_strings(old, new, locale=getattr(args, "locale", None))
+
+    tag = f" [{args.locale}]" if getattr(args, "locale", None) else ""
+    print(f"[FINDING] diff{tag}: {Path(args.old).name} -> {Path(args.new).name}")
+    print(f"  strings        : {len(old)} -> {len(new)}")
+    print(f"  added          : {d['added_n']}")
+    print(f"  removed        : {d['removed_n']}")
+    print(f"  changed        : {d['changed_n']}")
+
+    if args.json:
+        def keyed(keys):
+            return [f"{loc or '(default)'}|{name}" for loc, name in keys]
+        print(json.dumps({"added": keyed(d["added"]),
+                          "removed": keyed(d["removed"]),
+                          "changed": keyed(d["changed"])}, ensure_ascii=False))
+        return 0 if not (d["added_n"] or d["removed_n"] or d["changed_n"]) else 1
+
+    for label, keys, mark in (("added", d["added"], "+"),
+                              ("removed", d["removed"], "-"),
+                              ("changed", d["changed"], "~")):
+        if not keys:
+            continue
+        print(f"\n  {label}:")
+        for loc, name in keys[:args.limit]:
+            print(f"    {mark} {'(' + loc + ')' if loc else '(default)'} {name}")
+            if mark == "~":
+                print(f"        - {old[(loc, name)]}")
+                print(f"        + {new[(loc, name)]}")
+        if len(keys) > args.limit:
+            print(f"    … and {len(keys) - args.limit} more (--limit to change)")
+
+    # exit code is 0 when the two are identical, so a CI step can gate on drift
+    return 0 if not (d["added_n"] or d["removed_n"] or d["changed_n"]) else 1
+
+
 def cmd_lint(args):
     proj = Path(args.proj)
     res = proj / "res"
@@ -1576,6 +1762,23 @@ def build_parser():
     s.add_argument("--json", action="store_true")
     common(s)
     s.set_defaults(func=cmd_scan)
+
+    s = sub.add_parser("xliff", help="wrap format specifiers in <xliff:g> so translators cannot break them")
+    s.add_argument("proj")
+    s.add_argument("--locale", default="ar")
+    s.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="print what would be written, change nothing")
+    common(s)
+    s.set_defaults(func=cmd_xliff)
+
+    s = sub.add_parser("diff", help="compare the string resources of two APKs")
+    s.add_argument("old")
+    s.add_argument("new")
+    s.add_argument("--locale", help="only this locale, e.g. ar (default: every locale)")
+    s.add_argument("--limit", type=int, default=40, help="entries to list per section")
+    s.add_argument("--json", action="store_true")
+    common(s)
+    s.set_defaults(func=cmd_diff)
 
     s = sub.add_parser("decode", help="unpack an APK to a project dir")
     s.add_argument("apk")

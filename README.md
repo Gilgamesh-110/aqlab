@@ -174,6 +174,8 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `apply <dir> --tsv` | import a translated table back into the locale folder, each entry into the file its source came from. `--dry-run` to preview. |
 | `lint <dir>` | escaping bugs, format-specifier drift, plural structure, coverage (overall and per file), text-like vectors. Non-zero exit on errors; `--fail-under` / `--fail-under-file` gate CI on coverage. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
+| `diff <a.apk> <b.apk>` | added / removed / changed strings between two APKs, read straight from the resource table. Non-zero exit when they differ. |
+| `xliff <dir>` | wrap every format specifier in `<xliff:g>` so a translator cannot reorder or drop it. `--dry-run` to preview. |
 | `all <apk>` | the whole pipeline |
 
 ### Speed, and why `decode` skips `smali/`
@@ -321,6 +323,50 @@ It is skipped below `minSdkVersion 33` (the API did not exist), disabled entirel
 by `--no-locale-config`, and left alone when the app already declares its own
 config — the run tells you which attribute it found instead. Qualifier folders
 (`values-sw600dp`, `values-night`) are not languages and are excluded.
+
+### Protecting placeholders from a translator
+
+A bare `%1$s` in a translated string is fragile: a translator — human or machine —
+can reorder it, pluralise it, or drop it, and the app then crashes at
+`String.format` with an argument mismatch. Wrapping it tells the tool not to:
+
+```xml
+<string name="welcome">مرحباً <xliff:g id="arg1">%1$s</xliff:g>، لديك <xliff:g id="arg2">%2$d</xliff:g></string>
+```
+
+```bash
+aqlab xliff proj --locale ar
+```
+
+The id comes from the specifier's own index (`%2$d` → `arg2`), so it stays
+stable across re-translation instead of shifting with word order. `%%` is a
+literal percent and is left alone, and an existing `<xliff:g>` is not wrapped
+twice. Verified with aapt2: the file compiles, links, and the resolved value is
+the bare `%1$s` again — the tag exists only in the source.
+
+### Comparing two APKs
+
+```bash
+aqlab diff Chess_v2.apk Chess_v3.apk --locale ar
+```
+
+```
+[FINDING] diff [ar]: Chess_v2.apk -> Chess_v3.apk
+  strings        : 2998 -> 2998
+  added          : 1
+  removed        : 1
+  changed        : 1
+
+  changed:
+    ~ (ar) changing
+        - قبل
+        + بعد
+```
+
+Read straight from `aapt2 dump resources`, so neither APK is decoded — no
+50-second apktool run per side and no working copies to clean up. Text that did
+not change is never listed; it is the majority of any diff and would bury the
+real changes. Exit code is 0 when the two are identical, so CI can gate on drift.
 
 ### Other RTL languages
 

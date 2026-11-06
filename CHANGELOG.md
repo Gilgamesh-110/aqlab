@@ -7,8 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- `aqlab diff` between two APKs
-- automatic `<xliff:g>` around format specifiers
+- merge `diff` into `lint` for a single CI entry point
+
+## [0.1.14] — 2026-11-06
+
+The last two items from the roadmap.
+
+### Added
+- **`aqlab diff <a.apk> <b.apk>`.** Added / removed / changed string resources
+  between two APKs, read straight out of `aapt2 dump resources` — neither APK is
+  decoded, so no 50-second apktool run per side and no working copies left behind.
+
+  ```
+  [FINDING] diff [ar]: v2.apk -> v3.apk
+    strings        : 2998 -> 2998
+    added          : 1
+    removed        : 1
+    changed        : 1
+
+    changed:
+      ~ (ar) changing
+          - قبل
+          + بعد
+  ```
+
+  Text that did not change is never listed — it is the majority of any diff and
+  would bury the real changes. `--locale` narrows to one locale, `--json` for
+  tooling, exit 0 when identical so CI can gate on drift. Values that aapt2
+  could not resolve (`@0x…`) are skipped rather than reported as a change on
+  every run.
+
+- **`aqlab xliff <dir>`.** Wraps every format specifier in `<xliff:g id="…">`, so
+  translation tooling cannot reorder, pluralise or drop it — a bare `%1$s` that a
+  translator touches crashes the app at `String.format` with an argument
+  mismatch, one of the most common localisation crashes there is.
+
+  ```xml
+  <string name="welcome">مرحباً <xliff:g id="arg1">%1$s</xliff:g></string>
+  ```
+
+  The id comes from the specifier's own index (`%2$d` → `arg2`), so it stays
+  stable across re-translation instead of shifting with word order. `%%` is a
+  literal percent and is left alone; an existing `<xliff:g>` is not wrapped
+  twice; `xmlns:xliff` is declared when the file needs it. `--dry-run` included.
+
+  Verified with aapt2: compiles, links, and the resolved value is the bare
+  `%1$s` again — the tag exists only in the source.
 
 ## [0.1.13] — 2026-11-06
 

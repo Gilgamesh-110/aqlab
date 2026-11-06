@@ -160,6 +160,8 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `apply <dir> --tsv` | يستورد الجدول المترجم إلى مجلد اللغة، وكل إدخال لملفه الأصلي. `--dry-run` للمعاينة. |
 | `lint <dir>` | أخطاء التهريب، اختلاف الـformat specifiers، بنية صيغ الجمع، التغطية (الكل ولكل ملف)، الـvector اللي يشبه نص. كود خروج غير صفري عند الأخطاء؛ `--fail-under` / `--fail-under-file` بوابة CI على التغطية. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
+| `diff <a.apk> <b.apk>` | النصوص المضافة/المحذوفة/المتغيّرة بين APKين، مقروءة من جدول الموارد مباشرة. كود خروج غير صفري عند الاختلاف. |
+| `xliff <dir>` | يلفّ كل format specifier بـ`<xliff:g>` حتى المترجم ما يقدر يعيد ترتيبه أو يحذفه. `--dry-run` للمعاينة. |
 | `all <apk>` | السلسلة كاملة |
 
 ### السرعة، وليش `decode` يتخطّى `smali/`
@@ -294,6 +296,49 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 التشغيل يخبرك أي attribute لكاه. مجلدات الـqualifiers (`values-sw600dp`،
 `values-night`) مو لغات وتنستثنى.
 
+
+### حماية المتغيّرات من المترجم
+
+`%1$s` عارية بنص مترجم شي هش: المترجم — بشري أو آلي — يقدر يعيد ترتيبها أو
+يجمعها أو يحذفها، والتطبيق بعدها ينكسر بـ`String.format` لعدم تطابق الوسائط.
+لفّها يخبر الأداة لا تلمسها:
+
+```xml
+<string name="welcome">مرحباً <xliff:g id="arg1">%1$s</xliff:g>، لديك <xliff:g id="arg2">%2$d</xliff:g></string>
+```
+
+```bash
+aqlab xliff proj --locale ar
+```
+
+الـid من موضع الـspecifier نفسه (`%2$d` → `arg2`)، فيبقى ثابت عبر إعادة
+الترجمة بدل ما يتزحزح مع ترتيب الكلمات. `%%` نسبة حرفية وما تنلمس، والـ
+`<xliff:g>` الموجود ما ينلفّ مرتين. متحقَّق بـaapt2: الملف يترجم وينربط،
+والقيمة الناتجة ترجع `%1$s` عارية — الوسم موجود بالمصدر بس.
+
+### مقارنة APKين
+
+```bash
+aqlab diff Chess_v2.apk Chess_v3.apk --locale ar
+```
+
+```
+[FINDING] diff [ar]: Chess_v2.apk -> Chess_v3.apk
+  strings        : 2998 -> 2998
+  added          : 1
+  removed        : 1
+  changed        : 1
+
+  changed:
+    ~ (ar) changing
+        - قبل
+        + بعد
+```
+
+مقروءة من `aapt2 dump resources` مباشرة، فما ينفك أي APK — لا 50 ثانية
+apktool لكل طرف ولا نسخ عمل تتنظّف. النص اللي ما تغيّر ما ينعرض أبداً؛ هو أغلب
+أي diff وراح يغطي على التغييرات الحقيقية. كود الخروج 0 إذا الاثنين متطابقين،
+فالـCI يكدر يبوّب على الانحراف.
 
 ### لغات RTL ثانية
 
