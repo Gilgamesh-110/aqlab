@@ -137,6 +137,139 @@ def test_lint_fix_pin_nested(tmp):
     check("pin fix idempotent", A.fix_pin_nested(root) == 0 and not pins())
 
 
+def test_lint_fix_pin_local(tmp):
+    """`lint --fix` drops a `layoutDirection="ltr"` pin that sits on the row
+    itself, and migrates that row's physical attributes with it.
+
+    The pin is a decision *about this row*, unlike the ancestor pin `pinNested`
+    handles: a row whose author wrote `ltr` to keep its `paddingLeft` pointing
+    one way is the author turning RTL off for that row, and dropping the pin is
+    the only repair that keeps the row correct in both directions. `rtl` is a
+    deliberate mirror, so it stays.
+    """
+    root = Path(tmp) / "pinlocal"
+    res = root / "res" / "layout"
+    res.mkdir(parents=True)
+    f = res / "list.xml"
+    f.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<LinearLayout android:orientation="horizontal" android:layoutDirection="ltr"'
+        ' android:paddingLeft="4.0dip" android:layout_marginRight="2.0dip"/>'
+        '<LinearLayout android:orientation="horizontal" android:layoutDirection="rtl"'
+        ' android:gravity="right"/>'
+        '<LinearLayout android:orientation="horizontal" android:paddingLeft="6.0dip"/>'
+        '</LinearLayout>', encoding="utf-8")
+
+    pins_local = [g for g in A.direction_pins(root)
+                  if g[0] in ("layoutDirection", "textDirection")]
+    # The `rtl` row's `gravity="right"` is the `RtlHardcoded` finding, not a
+    # direction pin — only a row whose row is horizontal *and* physical is one,
+    # and both rows qualify, but the rtl one is deliberately left to the author.
+    check("local ltr pin reported",
+          [g[3] for g in pins_local] == ["ltr"], str(pins_local))
+
+    before = f.read_text(encoding="utf-8")
+    check("local pin dry-run counts but writes nothing",
+          A.fix_pin_local(root, dry=True) == 1
+          and f.read_text(encoding="utf-8") == before)
+
+    check("fixer drops the local ltr pin", A.fix_pin_local(root) == 1)
+    after = f.read_text(encoding="utf-8")
+    check("pin gone", 'android:layoutDirection="ltr"' not in after, after)
+    check("its row's physical attrs migrated",
+          'android:paddingStart="4.0dip"' in after
+          and 'android:layout_marginEnd="2.0dip"' in after, after)
+    check("the rtl mirror is left alone",
+          'android:layoutDirection="rtl" android:gravity="right"' in after, after)
+    check("a row without a pin is untouched",
+          'android:orientation="horizontal" android:paddingLeft="6.0dip"' in after, after)
+    check("local pin fix idempotent",
+          A.fix_pin_local(root) == 0
+          and not [g for g in A.direction_pins(root)
+                   if g[0] in ("layoutDirection", "textDirection") and g[3] == "ltr"])
+    # Isolated to the pin: the row has no missing partner, no gravity value and
+    # no pin on an ancestor, so `fixed: 1` can only be the pin fixer. The
+    # original fixture is not used here — its symmetry/gravity warnings would
+    # let the other fixers reach a count the pin fixer never contributed to.
+    lone = Path(tmp) / "pinlocal-lone"
+    (lone / "res" / "layout").mkdir(parents=True)
+    (lone / "res" / "layout" / "list.xml").write_text(
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<LinearLayout android:orientation="horizontal" android:layoutDirection="ltr"'
+        ' android:paddingLeft="4.0dip"/></LinearLayout>', encoding="utf-8")
+    (lone / "res" / "values").mkdir()
+    (lone / "res" / "values" / "strings.xml").write_text(STRINGS, encoding="utf-8")
+    (lone / "res" / "values-ar").mkdir()
+    (lone / "res" / "values-ar" / "strings.xml").write_text(STRINGS, encoding="utf-8")
+    (lone / "AndroidManifest.xml").write_text(MANIFEST, encoding="utf-8")
+    out_lone = io.StringIO()
+    with contextlib.redirect_stdout(out_lone):
+        A.cmd_lint(argparse.Namespace(proj=str(lone), locale="ar", json=False, fix=True,
+                                      dry_run=False, fail_under=None, fail_under_file=None,
+                                      verbose=False))
+    check("lint --fix reaches the local pin fixer",
+          "fixed: 1 element(s)" in out_lone.getvalue(), out_lone.getvalue()[-300:])
+    check("lint --fix wrote the migrated row",
+          'android:paddingStart="4.0dip"' in
+          (lone / "res" / "layout" / "list.xml").read_text(encoding="utf-8"))
+    p = Path(tmp) / "pinlocal-run"
+    shutil.copytree(root, p)
+    # `lint` reads the project's own strings and refuses to run without them,
+    # so the copy needs the minimum the linter opens before it reaches a layout.
+    (p / "res" / "values").mkdir(parents=True)
+    (p / "res" / "values" / "strings.xml").write_text(STRINGS, encoding="utf-8")
+    (p / "res" / "values-ar").mkdir()
+    (p / "res" / "values-ar" / "strings.xml").write_text(STRINGS, encoding="utf-8")
+    (p / "AndroidManifest.xml").write_text(MANIFEST, encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(argparse.Namespace(proj=str(p), locale="ar", json=False, fix=True,
+                                      dry_run=False, fail_under=None, fail_under_file=None,
+                                      verbose=False))
+    fixed = (p / "res" / "layout" / "list.xml").read_text(encoding="utf-8")
+    fixed = (p / "res" / "layout" / "list.xml").read_text(encoding="utf-8")
+    # `lint --fix` must actually *run* the fixer: `cmd_lint` prints the count it
+    # repaired, and a fixer wired nowhere prints nothing while the check stays.
+    # The `rtl` row's `gravity` belongs to the gravity fixer, so 2 means the
+    # pin fixer contributed exactly one and 1 means `cmd_lint` never ran it.
+    check("lint --fix reaches the local pin fixer",
+          "fixed: 2 element(s)" in out.getvalue(), out.getvalue()[-300:])
+    check("lint -> --fix repaired the local pin",
+          'android:layoutDirection="ltr"' not in fixed and
+          'android:paddingStart="4.0dip"' in fixed, fixed)
+    q = Path(tmp) / "pinlocal-names"
+    # A fresh copy of the *unedited* tree — copying `p` would copy the state
+    # `--fix` already cleaned, and an unfixed pin is the thing being named.
+    shutil.copytree(root, q)
+    qf = q / "res" / "layout" / "list.xml"
+    qf.write_text(
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<LinearLayout android:orientation="horizontal" android:layoutDirection="ltr"'
+        ' android:paddingLeft="4.0dip"/>'
+        '<LinearLayout android:orientation="horizontal" android:layoutDirection="rtl"'
+        ' android:gravity="right"/>'
+        '</LinearLayout>', encoding="utf-8")
+    (q / "res" / "values").mkdir(parents=True)
+    (q / "res" / "values" / "strings.xml").write_text(STRINGS, encoding="utf-8")
+    (q / "res" / "values-ar").mkdir()
+    (q / "res" / "values-ar" / "strings.xml").write_text(STRINGS, encoding="utf-8")
+    (q / "AndroidManifest.xml").write_text(MANIFEST, encoding="utf-8")
+    out2 = io.StringIO()
+    with contextlib.redirect_stdout(out2):
+        A.cmd_lint(argparse.Namespace(proj=str(q), locale="ar", json=False, fix=False,
+                                      dry_run=False, fail_under=None, fail_under_file=None,
+                                      verbose=False))
+    check("lint named the pin before fixing it",
+          'layoutDirection="ltr" pins a horizontal row' in out2.getvalue(),
+          out2.getvalue()[:400])
+    check("lint promised a fix for the ltr pin",
+          "drops the pin and migrates the row" in out2.getvalue(), out2.getvalue()[:400])
+    check("lint promised nothing for the rtl mirror",
+          out2.getvalue().count("drops the pin and migrates the row") == 1,
+          out2.getvalue()[:600])
+
+
 def test_rtl(proj):
     changes = A.patch_rtl(proj)
     man = (proj / "AndroidManifest.xml").read_text(encoding="utf-8")
@@ -1927,6 +2060,7 @@ def main():
         test_lint_fix_gravity(tmp)
         test_lint_fix(tmp)
         test_lint_fix_pin_nested(tmp)
+        test_lint_fix_pin_local(tmp)
         test_direction_pins(tmp)
         test_rtl(proj)
         test_lint(proj)

@@ -2126,9 +2126,14 @@ def cmd_lint(args):
                                 'RTL entirely; run `aqlab rtl`')
         elif kind == "layoutDirection":
             tag_, val = rest
+            # Only `ltr` is repairable: dropping it lets the row follow the
+            # locale. An `rtl` pin is a deliberate mirror, so the message must
+            # not promise a fix `--fix` leaves alone.
+            tip = ("; `aqlab lint --fix` drops the pin and migrates the row"
+                   if val == "ltr" else "")
             add("warn", f"{where}:<{tag_}>",
                 f'layoutDirection="{val}" pins a horizontal row that already sets '
-                f'left/right attrs — it will not flip in {args.locale}')
+                f'left/right attrs — it will not flip in {args.locale}{tip}')
         elif kind == "pinNested":
             tag_, val = rest
             add("warn", f"{where}:<{tag_}>",
@@ -2186,6 +2191,7 @@ def cmd_lint(args):
     if getattr(args, "fix", False):
         fixed = fix_symmetry(proj, dry=getattr(args, "dry_run", False))
         fixed += fix_gravity(proj, dry=getattr(args, "dry_run", False))
+        fixed += fix_pin_local(proj, dry=getattr(args, "dry_run", False))
         fixed += fix_pin_nested(proj, dry=getattr(args, "dry_run", False))
         if fixed:
             print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
@@ -2229,6 +2235,60 @@ def gravity_fix(text):
 
 
 ANY_DIR_RE = re.compile(r'(?<![\w.-])(?:android:|app:)?(?:layout|text)Direction\s*=')
+# A *local* pin on a row that also carries physical attributes is the same
+# defect one level up, and the fixer's answer differs: the ancestor pin in
+# `pinNested` is deliberate, but a pin on the row itself only exists to keep an
+# LTR-shaped row LTR in Arabic. `ltr` in an RTL-target build is therefore the
+# wrong decision, not a design — drop the pin and let the row follow the locale,
+# migrating its physical attrs so the row is still correct in both directions.
+# `rtl` is a deliberate mirror and is left to the author.
+LOCAL_PIN_RE = re.compile(
+    r'(?<![\w.-])(?:android:)?layoutDirection\s*=\s*"ltr"')
+
+
+def fix_pin_local(proj, dry=False):
+    """Drop `layoutDirection="ltr"` from rows `direction_pins` reported as
+    `layoutDirection`/`textDirection` pins, migrating the row's physical attrs.
+
+    Returns rows changed; idempotent — the pin is gone after one pass, so the
+    check names nothing on the second.
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return 0
+    broken = {}
+    for kind, path, tag, val in direction_pins(proj):
+        if kind in ("layoutDirection", "textDirection") and val == "ltr":
+            broken.setdefault(path, []).append(tag)
+    n = 0
+    for rel, wanted in sorted(broken.items()):
+        f = Path(proj) / rel
+        try:
+            txt = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        out, i, done = [], 0, 0
+        for tag, body, _depth, _sc in walk_layout(txt):
+            if not wanted:
+                break
+            pos = txt.find(body, i)
+            if pos < 0 or tag != wanted[0] or not LOCAL_PIN_RE.search(body):
+                continue
+            new_body = LOCAL_PIN_RE.sub("", body)
+            # Collapse the gap the removal leaves behind, or the tag reads
+            # `<Row   android:paddingLeft...>` and every later diff is noise.
+            new_body = re.sub(r"\s{2,}", " ", new_body)
+            fixed, _hits = rewrite_xml_attrs("<x" + new_body + ">")
+            wanted.pop(0)
+            out.append(txt[i:pos] + fixed[2:-1])
+            i = pos + len(body)
+            done += 1
+        if done:
+            out.append(txt[i:])
+            if not dry:
+                f.write_text("".join(out), encoding="utf-8")
+            n += done
+    return n
 
 
 def fix_pin_nested(proj, dry=False):

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lint --fix` drops a local `layoutDirection="ltr"` pin.** A pin on the row
+  itself is the author turning RTL off for that row to keep its `paddingLeft`
+  pointing one way; the fixer drops the pin so the row follows the locale and
+  migrates that row's physical attributes with it. An `rtl` pin is a deliberate
+  mirror and is left alone, and the warning only promises the fix when the value
+  is `ltr`. Idempotent, `--dry-run` aware. Measured on the real APK: 0 local
+  pins, so nothing new fires — 41 warnings / 1 error unchanged, and
+  `--fix --dry-run` still plans the same 2 gravity rewrites.
 - **`lint --fix` repairs `pinNested`.** The pin itself is deliberate (a clock
   face, a keypad), so the fixer does not remove it: it applies `aqlab rtl` to the
   named row only, renaming the physical `paddingLeft`/`layout_marginRight` that

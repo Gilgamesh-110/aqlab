@@ -172,7 +172,7 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `rtl <dir>` | set `android:supportsRtl` and migrate `left/right` → `start/end` across `res/**`. `--dry-run` to preview. |
 | `scaffold <dir>` | create `res/values-<locale>/`, a translation TSV, and (API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. Every `values/*.xml` is read, not just `strings.xml`. `--dry-run` to preview. |
 | `apply <dir> --tsv` | import a translated table back into the locale folder, each entry into the file its source came from. `--dry-run` to preview. |
-| `lint <dir>` | escaping bugs, format-specifier drift, plural structure, coverage (overall and per file), text-like vectors, `RtlSymmetry` / `RtlHardcoded` / `DirectionPins` (a pinned direction on a row, or on a container whose children set left/right), `ldrtl` drawable folders that are empty or hold a byte-identical copy of the LTR file. Non-zero exit on errors; `--fail-under` / `--fail-under-file` gate CI on coverage; `--fix` completes a missing `paddingStart`/`paddingEnd`-style partner, rewrites physical `gravity`/`textAlignment` values to `start`/`end`, and migrates the physical attributes of a row that only inherits a pinned direction (`--fix --dry-run` plans it). |
+| `lint <dir>` | escaping bugs, format-specifier drift, plural structure, coverage (overall and per file), text-like vectors, `RtlSymmetry` / `RtlHardcoded` / `DirectionPins` (a pinned direction on a row, or on a container whose children set left/right), `ldrtl` drawable folders that are empty or hold a byte-identical copy of the LTR file. Non-zero exit on errors; `--fail-under` / `--fail-under-file` gate CI on coverage; `--fix` completes a missing `paddingStart`/`paddingEnd`-style partner, rewrites physical `gravity`/`textAlignment` values to `start`/`end`, migrates the physical attributes of a row that only inherits a pinned direction, and drops a `layoutDirection="ltr"` pin set on the row itself (migrating that row's physical attrs with it; an `rtl` pin is a deliberate mirror and is kept) (`--fix --dry-run` plans all three). |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `diff <a.apk> <b.apk>` | added / removed / changed strings between two APKs, read straight from the resource table. Non-zero exit when they differ. |
 | `xliff <dir>` | wrap every format specifier in `<xliff:g>` so a translator cannot reorder or drop it. `--dry-run` to preview. |
@@ -421,7 +421,7 @@ Gate it in CI:
 ```bash
 aqlab lint proj --fail-under 95            # overall
 aqlab lint proj --fail-under-file 90       # any single file
-aqlab lint proj --fix --dry-run            # plan the partner fills + gravity rewrites
+aqlab lint proj --fix --dry-run            # plan the partner fills, gravity + pin rewrites
 ```
 
 Exit code is non-zero on errors, so it drops straight into CI.
