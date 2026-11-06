@@ -1293,6 +1293,58 @@ def test_direction_pins(tmp):
     check("pin after a `>` inside a value still found",
           any(g[1].endswith("gt.xml") for g in gt), str(gt))
 
+    # A direction set on a container resolves for everything under it that does
+    # not override it, so a pinned container is the same defect one level up.
+    (res / "layout" / "nest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<LinearLayout android:layoutDirection="ltr">'
+        '<LinearLayout android:paddingLeft="4.0dip"/>'          # inherited: defect
+        '<LinearLayout android:layoutDirection="locale" android:paddingLeft="4.0dip"/>'
+        '<LinearLayout android:paddingLeft="4.0dip">'
+        '<LinearLayout android:paddingRight="2.0dip"/></LinearLayout>'
+        '</LinearLayout>'   # closes the pin holder, not the root
+        '<FrameLayout android:layoutDirection="rtl">'
+        '<TextView android:paddingLeft="1.0dip"/>'
+        '</FrameLayout>'
+        '<LinearLayout android:paddingLeft="8.0dip"/>'           # sibling: no pin
+        '<LinearLayout android:paddingLeft="8.0dip"></LinearLayout>'
+        '</LinearLayout>', encoding="utf-8")
+    nest = [g for g in A.direction_pins(root) if g[1].endswith("nest.xml")]
+    check("inherited pin on a child row reported",
+          any(g[0] == "pinNested" and g[2] == "LinearLayout" and g[3] == "ltr"
+              for g in nest), str(nest))
+    check("inherited pin reaches a grandchild row too",
+          len([g for g in nest if g[0] == "pinNested" and g[3] == "ltr"]) == 3, str(nest))
+    # A `TextView` is a leaf: its own padding is the row's, so it is one more
+    # row under the pin unless the tag's defaults say otherwise — it does not,
+    # so the inherited report lands on the enclosing LinearLayout, not here.
+    check("no inherited report on a leaf TextView",
+          not any(g[2] == "TextView" for g in nest), str(nest))
+    # A `/>`-closed row: the slash used to be left on the body, so the
+    # `orientation` absence test saw a trailing `/` and matched — silently
+    # dropping every self-closed row from the rule.
+    # A `/>`-closed row used to keep its slash on the body, so the `orientation`
+    # absence test read it as "an orientation is set". A self-closed
+    # `LinearLayout` is the only tag where the slash can change the answer, so
+    # the self-closed row here is one level down, inside a `FrameLayout` row.
+    (res / "layout" / "row.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<FooBar><LinearLayout android:layoutDirection="rtl">'
+        '<FrameLayout android:paddingLeft="1.0dip">'
+        '<LinearLayout android:paddingLeft="2.0dip">'
+        '<LinearLayout android:paddingLeft="3.0dip" /></LinearLayout></FrameLayout>'
+        '</LinearLayout></FooBar>', encoding="utf-8")
+    rows = [g for g in A.direction_pins(root) if g[1].endswith("row.xml")]
+    check("pin on a self-closing row still found",
+          len(rows) == 2 and rows[-1][2] == "LinearLayout"
+          and all(g[3] == "rtl" for g in rows), str(rows))
+    check("child pinning `locale` is left silent",
+          not any(g[2] == "LinearLayout" and g[3] == "locale" for g in nest), str(nest))
+    # The pin's holder closes before the sibling row: nothing after it inherits.
+    check("exactly four inherited rows",
+          len([g for g in nest if g[0] == "pinNested"]) == 5, str(nest))
+
 
 def test_scaffold_apply(proj, tmp):
     rc = A.cmd_scaffold(argparse.Namespace(proj=str(proj), locale="ar", tsv=None,

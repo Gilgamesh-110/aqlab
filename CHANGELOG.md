@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`DirectionPins` follows a pin into the children.** A direction set on a
+  container is the resolved direction of every descendant that does not
+  override it, so a pinned `<LinearLayout>` whose child rows carry `paddingLeft`
+  is the same defect one level up. Reported as kind `pinNested`, naming the
+  inherited value; a child that sets `layoutDirection`/`textDirection` of its own
+  (including `locale`) stops the chain. Nesting comes from a new
+  `walk_layout` scanner, which also fixes the `orientation` test: it used to run
+  on the raw tag body, so a `/>`-closed row's trailing slash hid the closing
+  break. Measured on the real APK: both Material `layoutDirection="ltr"` pins sit
+  on containers whose only children are `include`s with no physical attributes,
+  so 0 new findings (41 warnings, 1 error, unchanged).
+
 - **`DirectionPins` now also catches `textDirection`.** `android:textDirection="ltr"`
   (or `"rtl"`) on a horizontal row that already sets a left/right attribute
   keeps the *text* pinned while the row flips — the same author mistake one level

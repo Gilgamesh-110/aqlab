@@ -61,6 +61,10 @@ def _tags(text):
 # --------------------------------------------------------------------------
 
 # Attribute *name* renames: left->Start, right->End.
+# Tags whose `orientation` defaults to horizontal; a row of these with no
+# explicit orientation is horizontal all the same.
+HORIZONTAL_BY_DEFAULT = ("LinearLayout", "RadioGroup", "TableRow")
+
 ATTR_RENAME = {
     "layout_marginLeft": "layout_marginStart",
     "layout_marginRight": "layout_marginEnd",
@@ -1344,6 +1348,64 @@ def hardcoded_gravity(proj):
     return found
 
 
+def walk_layout(txt):
+    """Yield (tag, body, depth, self_closing) for every start tag, depth being
+    how many elements enclose it.
+
+    `iter_start_tags` drops closing tags, so nesting is recovered here from the
+    text itself: a `/>` opens and closes at once, a `</name>` closes the
+    innermost open element with that name, and everything else stays open.
+    """
+    stack, i, n = [], 0, len(txt)
+    while True:
+        i = txt.find("<", i)
+        if i < 0:
+            return
+        if txt.startswith("</", i):
+            j = txt.find(">", i)
+            if j < 0:
+                return
+            name = txt[i + 2:j].strip()
+            for k in range(len(stack) - 1, -1, -1):
+                if stack[k] == name:
+                    del stack[k:]
+                    break
+            i = j + 1
+            continue
+        if txt.startswith("<!", i) or txt.startswith("<?", i):
+            j = txt.find(">", i)
+            if j < 0:
+                return
+            i = j + 1
+            continue
+        j, quote = i + 1, None
+        while j < n:
+            ch = txt[j]
+            if quote:
+                if ch == quote:
+                    quote = None
+            elif ch in (chr(34), chr(39)):
+                quote = ch
+            elif ch == ">":
+                break
+            j += 1
+        if j >= n:
+            return
+        body = txt[i + 1:j]
+        end = 0
+        while end < len(body) and not body[end].isspace() and body[end] != "/":
+            end += 1
+        tag = body[:end]
+        attrs = body[end:]
+        self_closing = attrs.rstrip().endswith("/")
+        if self_closing:
+            attrs = attrs.rstrip()[:-1]  # keep the `row` tests off the slash
+        yield tag, attrs, len(stack), self_closing
+        if not self_closing:
+            stack.append(tag)
+        i = j + 1
+
+
 def direction_pins(proj):
     """A layout direction pinned on a row that also carries physical attributes,
     and a manifest that opts out of RTL entirely.
@@ -1372,8 +1434,20 @@ def direction_pins(proj):
     Manifest: `android:supportsRtl="false"` is the only wrong value — absence is
     the platform default and `aqlab scan` already flags that separately.
 
-    Returns [("supportsRtl", path, "")], [("layoutDirection", path, tag, value)]
-    and [("textDirection", path, tag, value)].
+    A pin does not stop at its own row: a direction set on a container becomes the
+    resolved direction of every descendant that does not override it. So a pinned
+    `<FrameLayout>` whose child row carries `paddingLeft` is the same defect as a
+    pinned row, one level up — measured on a real APK, `material_clock_display`
+    pins an outer `LinearLayout` whose four children are the actual rows. Reported
+    as kind `pinNested`, and only when the child holds a physical attribute and no
+    `layoutDirection`/`textDirection` of its own at the same level or nearer
+    (otherwise the child already overrode the pin and the row flips normally).
+
+    `layoutDirection="locale"` is not a pin — it is the default spelled out — and
+    is skipped by both the local and the nested half.
+
+    Returns [("supportsRtl", path, "")], [("layoutDirection", path, tag, value)],
+    [("textDirection", path, tag, value)] and [("pinNested", path, tag, value)].
     """
     out = []
     manifest = Path(proj) / "AndroidManifest.xml"
@@ -1392,24 +1466,54 @@ def direction_pins(proj):
     # The tag is found by `iter_start_tags`, not by a regex: a layout holds
     # several siblings that open with the same tag, and one regex match used to
     # swallow the next element's attributes, so a pin could vanish.
-    pin_re = re.compile(r'(?<![\w.-])(?:android:|app:)?layoutDirection\s*=\s*"(ltr|rtl)"')
-    txt_re = re.compile(r'(?<![\w.-])(?:android:|app:)?textDirection\s*=\s*"(ltr|rtl)"')
+    pin_re = re.compile(r'(?<![\w.-])(?:android:|app:)?layoutDirection\s*=\s*"(?!locale)(ltr|rtl)"')
+    txt_re = re.compile(r'(?<![\w.-])(?:android:|app:)?textDirection\s*=\s*"(?!locale)(ltr|rtl)"')
+    any_dir_re = re.compile(r'(?<![\w.-])(?:android:|app:)?(?:layout|text)Direction\s*=')
     phys_re = re.compile(r"(?<![\w.-])(?:android|app):(%s)\s*=" % "|".join(ATTR_RENAME))
+
     for f in sorted(res.glob("layout*/*.xml")):
         try:
             txt = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for tag, body in iter_start_tags(txt):
-            if 'orientation="horizontal"' not in body:
-                continue
-            if not phys_re.search(body):
-                continue
+        pinned = []  # [(depth, tag, value)] still in scope
+        for tag, body, depth, self_closing in walk_layout(txt):
+            while pinned and pinned[-1][0] > depth:
+                pinned.pop()
+            # `locale` is the platform default spelled out, not a pin.
+            local = None
             for kind, rx in (("layoutDirection", pin_re), ("textDirection", txt_re)):
                 pm = rx.search(body)
                 if pm:
-                    out.append((kind, f.relative_to(proj).as_posix(),
-                                tag, pm.group(1)))
+                    local = (kind, pm.group(1))
+                    break
+            if local:
+                while pinned and pinned[-1][0] >= depth:
+                    pinned.pop()
+                pinned.append((depth, tag, local[1]))
+            # A row is horizontal when it says so, or when it is a
+            # `LinearLayout`/`RadioGroup`/`TableRow` that left the orientation to
+            # the default — horizontal for all three. A bare `<include>` counts
+            # only when it carries the physical attribute itself: the row it
+            # pulls in lives in another file and is linted there.
+            row = ('orientation="horizontal"' in body
+                   or (not re.search(r'(?<![\w.-])orientation\s*=', body)
+                       and (tag in HORIZONTAL_BY_DEFAULT or tag == "include")))
+            phys = bool(phys_re.search(body))
+            # An `<include>` has neither text nor gravity; the only thing that
+            # makes one relevant is the padding/margin it carries itself.
+            if tag == "include" and not phys:
+                continue
+            if not phys or not row:
+                continue
+            chain = None if local else (pinned[-1][2] if pinned else None)
+            if local:
+                kind, val = local
+                out.append((kind, f.relative_to(proj).as_posix(), tag, val))
+            elif chain and not any_dir_re.search(body):
+                # A child that sets its own direction breaks the chain: it and
+                # everything under it follow that value, not the outer pin.
+                out.append(("pinNested", f.relative_to(proj).as_posix(), tag, chain))
     return out
 
 
@@ -2016,6 +2120,12 @@ def cmd_lint(args):
             add("warn", f"{where}:<{tag_}>",
                 f'layoutDirection="{val}" pins a horizontal row that already sets '
                 f'left/right attrs — it will not flip in {args.locale}')
+        elif kind == "pinNested":
+            tag_, val = rest
+            add("warn", f"{where}:<{tag_}>",
+                f'inherits layoutDirection="{val}" from an ancestor and sets '
+                f'left/right attrs — the ancestor pin keeps this row {val} in '
+                f'{args.locale}')
         else:
             tag_, val = rest
             add("warn", f"{where}:<{tag_}>",
