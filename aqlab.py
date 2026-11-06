@@ -1236,6 +1236,15 @@ def scan_project(proj, args):
     grav = hardcoded_gravity(proj)
     if grav:
         print(f"  hardcoded grav : {len(grav)} value(s) pin text to a physical side")
+    pins = direction_pins(proj)
+    for kind, where, *_rest in pins:
+        if kind == "supportsRtl":
+            print(f"  supportsRtl    : false — Arabic gets the LTR layout; "
+                  f"run `aqlab rtl`")
+        else:
+            tag_, val = _rest
+            print(f"  direction pin  : {where}:<{tag_}> layoutDirection=\"{val}\" on a "
+                  f"horizontal row with physical attrs")
     vec = text_like_vectors(proj)
     if vec:
         print(f"  text vectors   : {len(vec)} — Latin glyphs baked into geometry, check by eye")
@@ -1326,6 +1335,65 @@ def hardcoded_gravity(proj):
                 continue
             found.append((f.relative_to(proj).as_posix(), attr, val))
     return found
+
+
+def direction_pins(proj):
+    """A layout direction pinned on a row that also carries physical attributes,
+    and a manifest that opts out of RTL entirely.
+
+    `layoutDirection="ltr"` is not a defect by itself. A clock face, a numeric
+    keypad, a media timeline — those are the same shape in every language, and
+    pinning them is exactly right. The pin only becomes a problem when it sits on
+    a horizontal row that *also* sets a left/right attribute: then it is not a
+    design decision, it is the author turning RTL off for that row and papering
+    over the physical attributes underneath. That row stays LTR in Arabic.
+
+    Measured on a real APK: its two pins are Material's `material_clock_display`
+    and `material_timepicker_textinput_display` — horizontal rows of hour/minute
+    includes with no physical attributes anywhere under them, so both are
+    silent here. Pinning alone costs nothing; pinning over physical attrs does.
+
+    `layoutDirection="rtl"` mirrors; reported by the same rule.
+
+    Manifest: `android:supportsRtl="false"` is the only wrong value — absence is
+    the platform default and `aqlab scan` already flags that separately.
+
+    Returns [("supportsRtl", path, "")] and [("layoutDirection", path, tag, value)].
+    """
+    out = []
+    manifest = Path(proj) / "AndroidManifest.xml"
+    if manifest.exists():
+        txt = manifest.read_text(encoding="utf-8", errors="replace")
+        if re.search(r'supportsRtl\s*=\s*"false"', txt):
+            out.append(("supportsRtl", "AndroidManifest.xml", ""))
+
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return out
+    # Any start tag, self-closing or not: the interesting case is a container
+    # wrapping children, which is a plain `<LinearLayout ...>`. Attributes are
+    # matched with plain `\s`, not `` — apktool puts the first attribute on
+    # the tag's own line, and a line start is not a word boundary before `a`.
+    elem = re.compile(r"<([A-Za-z][\w.]*)((?:\s+[^<>]*?)?)/?>", re.DOTALL)
+    pin_re = re.compile(r'layoutDirection\s*=\s*"(ltr|rtl)"')
+    phys_re = re.compile(r"(?:android|app):(%s)\s*=" % "|".join(ATTR_RENAME))
+    for f in sorted(res.glob("layout*/*.xml")):
+        try:
+            txt = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in elem.finditer(txt):
+            tag, body = m.group(1), m.group(2) or ""
+            pm = pin_re.search(body)
+            if not pm:
+                continue
+            if 'orientation="horizontal"' not in body:
+                continue
+            if not phys_re.search(body):
+                continue
+            out.append(("layoutDirection", f.relative_to(proj).as_posix(),
+                        tag, pm.group(1)))
+    return out
 
 
 def count_legacy_attrs(proj):
@@ -1772,6 +1840,19 @@ def cmd_lint(args):
     for path, attr, value in hardcoded_gravity(proj):
         add("warn", f"{path}:{attr}", f'"{value}" pins text to a physical side; '
                                       f'run `aqlab rtl` to rewrite it to start/end')
+
+    # A pinned direction on a row that also carries left/right attributes is the
+    # author working around RTL instead of supporting it — the pin wins over the
+    # locale and the row stays LTR in Arabic.
+    for kind, where, *rest in direction_pins(proj):
+        if kind == "supportsRtl":
+            add("error", where, 'android:supportsRtl="false" — the manifest opts out of '
+                                'RTL entirely; run `aqlab rtl`')
+        else:
+            tag_, val = rest
+            add("warn", f"{where}:<{tag_}>",
+                f'layoutDirection="{val}" pins a horizontal row that already sets '
+                f'left/right attrs — it will not flip in {args.locale}')
 
     print(f"[FINDING] lint res/values-{args.locale}: {covered}/{len(src)} translated ({cov:.1f}%)")
     # Per file only when there is more than one, so the common case stays one line.

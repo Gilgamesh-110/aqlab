@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`DirectionPins`.** Two ways an app decides the reading direction at
+  authoring time instead of letting the locale decide:
+  `android:layoutDirection="ltr"` on a horizontal row that *also* sets
+  `paddingLeft` / `layout_toLeftOf` / `layout_gravity="left"` (the pin is then a
+  workaround, not a design choice, and the row stays LTR in Arabic), and an
+  explicit `android:supportsRtl="false"` in the manifest. `aqlab scan` and
+  `aqlab lint` both report them. A pin on a row with no physical attributes —
+  a clock face, a keypad — is silent by design: measured on a real APK, both of
+  its pins are Material's `material_clock_display` and
+  `material_timepicker_textinput_display`, and both are correctly ignored.
+
 ### Planned
 - merge `diff` into `lint` for a single CI entry point
 

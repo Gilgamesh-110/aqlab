@@ -10,4 +10,4 @@ Every check mutation-tested. Measure on a real APK before claiming it works.
 |---|---|---|---|---|
 | 1 | 2026-11-06 | `RtlSymmetry` — one side set without its partner | 202 → 208 | 49 findings |
 | 2 | 2026-11-06 | `RtlHardcoded` — `gravity="left|bottom"` etc. | 208 → 215 | 2 findings |
-| 3 | | *(next round writes here)* | | |
+| 3 | 2026-11-06 | `DirectionPins` — `layoutDirection` pinned over physical attrs + `supportsRtl="false"` | 215 → 222 | 0 findings (2 pins correctly ignored) |

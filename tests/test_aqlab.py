@@ -19,8 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import aqlab as A  # noqa: E402
 
-MANIFEST = """<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+MANIFEST = """<?xml version="1.0" encoding="utf-8"?>\n<manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.app">
     <application android:label="@string/app_name" android:theme="@style/App">
         <activity android:name=".Main"/>
@@ -28,8 +27,7 @@ MANIFEST = """<?xml version="1.0" encoding="utf-8"?>
 </manifest>
 """
 
-LAYOUT = """<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+LAYOUT = """<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -47,8 +45,7 @@ LAYOUT = """<?xml version="1.0" encoding="utf-8"?>
 </LinearLayout>
 """
 
-STRINGS = """<?xml version="1.0" encoding="utf-8"?>
-<resources>
+STRINGS = """<?xml version="1.0" encoding="utf-8"?>\n<resources>
     <string name="app_name">MyApp</string>
     <string name="welcome">Welcome back, %1$s</string>
     <string name="progress">Downloading %d files</string>
@@ -944,6 +941,77 @@ def test_hardcoded_gravity(tmp):
     check("lint warns with the fix", "aqlab rtl" in out.getvalue(), out.getvalue()[:400])
 
 
+def test_direction_pins(tmp):
+    """DirectionPins: a pin over physical attrs keeps a row LTR in Arabic.
+
+    The pin alone must stay silent — a clock face or a keypad is legitimately
+    ltr in every locale, and flagging it is the noise that kills a check. On the
+    real APK this rule reports 0: both of its pins (`material_clock_display`,
+    `material_timepicker_textinput_display`) are horizontal rows of includes
+    with no physical attribute anywhere under them.
+    """
+    root = Path(tmp) / "pins"
+    res = root / "res"
+    for d in ("values", "values-ar", "layout", "layout-ar"):
+        (res / d).mkdir(parents=True)
+    for d in ("values", "values-ar"):
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<resources><string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:supportsRtl="false"/></manifest>',
+        encoding="utf-8")
+    body = [
+        # pinned ltr AND physical: the defect
+        '<LinearLayout android:orientation="horizontal"',
+        '    android:layoutDirection="ltr" android:paddingLeft="8.0dip">',
+        '  <TextView android:layout_width="1.0dip" android:layout_height="1.0dip"/>',
+        '</LinearLayout>',
+        # pinned rtl, physical, mirror image: also a defect
+        '<LinearLayout android:orientation="horizontal"',
+        '    android:layoutDirection="rtl" android:layout_toLeftOf="@id/x">',
+        '  <TextView android:layout_width="1.0dip" android:layout_height="1.0dip"/>',
+        '</LinearLayout>',
+        # pinned, horizontal, physical-attribute-free: a clock face. silent
+        '<LinearLayout android:orientation="horizontal" android:layoutDirection="ltr"/>',
+        # physical attrs but no pin: that is RtlSymmetry/RtlHardcoded's job
+        '<LinearLayout android:orientation="horizontal" android:paddingLeft="8.0dip"/>',
+        # pinned vertical: direction is irrelevant on a column
+        '<LinearLayout android:orientation="vertical"',
+        '    android:layoutDirection="ltr" android:paddingLeft="8.0dip"/>',
+    ]
+    (res / "layout" / "t.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' android:layout_width="match_parent" android:layout_height="match_parent">'
+        + "".join(body) + '</LinearLayout>', encoding="utf-8")
+
+    got = A.direction_pins(root)
+    pins = [g for g in got if g[0] == "layoutDirection"]
+    check("two pins reported", len(pins) == 2, str(got))
+    check("ltr pin caught", any(g[3] == "ltr" for g in pins), str(pins))
+    check("rtl pin caught", any(g[3] == "rtl" for g in pins), str(pins))
+    check("supportsRtl=false in manifest reported",
+          any(g[0] == "supportsRtl" for g in got), str(got))
+
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:supportsRtl="true"/></manifest>',
+        encoding="utf-8")
+    check("supportsRtl=true not flagged",
+          not any(g[0] == "supportsRtl" for g in A.direction_pins(root)))
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar", quiet=True,
+                                      verbose=False, fail_under=None,
+                                      fail_under_file=None))
+    v = out.getvalue()
+    check("lint warns on the ltr pin", 'layoutDirection="ltr"' in v, v[:500])
+    check("lint names the row", "t.xml" in v, v[:500])
+
+
 def test_scaffold_apply(proj, tmp):
     rc = A.cmd_scaffold(argparse.Namespace(proj=str(proj), locale="ar", tsv=None,
                                           force=False, quiet=True))
@@ -1006,8 +1074,7 @@ def test_scaffold_apply(proj, tmp):
 
 def test_lint(proj):
     ar = proj / "res" / "values-ar" / "strings.xml"
-    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>
-<resources>
+    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>\n<resources>
     <string name="app_name">MyApp</string>
     <string name="welcome">مرحباً بعودتك، %s</string>
     <string name="progress">خصم 50% الآن</string>
@@ -1021,8 +1088,7 @@ def test_lint(proj):
     # categories. The previous fixture carried only `one`/`other`, i.e. English
     # quantities with Arabic words, which is the exact defect the plural check
     # was written to catch.
-    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>
-<resources>
+    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>\n<resources>
     <string name="app_name">تطبيقي</string>
     <string name="welcome">مرحباً بعودتك، %1$s</string>
     <string name="progress">تنزيل %d ملفات</string>
@@ -1042,8 +1108,7 @@ def test_lint(proj):
 
     # Arabic drops the count in `zero`/`one`/`two` ("ملف واحد", "ملفان") — that is
     # correct, not a finding
-    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>
-<resources>
+    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>\n<resources>
     <string name="app_name">تطبيقي</string>
     <string name="welcome">مرحباً بعودتك، %1$s</string>
     <string name="progress">تنزيل %d ملفات</string>
@@ -1467,6 +1532,7 @@ def main():
         test_xliff_wrapping(tmp)
         test_symmetry_check(tmp)
         test_hardcoded_gravity(tmp)
+        test_direction_pins(tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)
