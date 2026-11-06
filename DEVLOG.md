@@ -14,3 +14,4 @@ Every check mutation-tested. Measure on a real APK before claiming it works.
 | 4 | 2026-11-07 | lint --fix — fill missing padding/margin partner (modern pairs only) | 222 → 234 | 38 elements fixed, 49 → 10 findings, 2nd pass writes nothing |
 | 5 | 2026-11-07 | `RtlDrawableDirs` — `drawable-ldrtl*`/`mipmap-ldrtl*` empty, or a byte-identical copy of the LTR file | 234 → 243 | 0 findings on real APK (`drawable-ldrtl-xxhdpi` holds 1 spinner with no LTR twin) |
 | 6 | 2026-11-07 | `GRAVITY_TOKEN` — compound gravity (`left|center`) was reported by lint but rewritten by nothing; one token test now drives lint, `migrate_attr` and style repair | 243 → 251 | 2 findings still real, and now actually fixable by `aqlab rtl` |
+| 7 | 2026-11-07 | `lint --fix` repairs `RtlHardcoded` (gravity/textAlignment values rewritten with the `aqlab rtl` token tables, attribute-name scoped) | 251 → 260 | 41 → 39 warnings on real APK, both `left|center` rewritten, 2nd pass writes nothing |

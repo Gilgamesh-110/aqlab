@@ -1951,7 +1951,7 @@ def cmd_lint(args):
     # locale, so it has to be renamed by hand — say where.
     for path, attr, value in hardcoded_gravity(proj):
         add("warn", f"{path}:{attr}", f'"{value}" pins text to a physical side; '
-                                      f'run `aqlab rtl` to rewrite it to start/end')
+                                      f'`aqlab lint --fix` rewrites it to start/end')
 
     # A pinned direction on a row that also carries left/right attributes is the
     # author working around RTL instead of supporting it — the pin wins over the
@@ -2010,12 +2010,68 @@ def cmd_lint(args):
     fixed = 0
     if getattr(args, "fix", False):
         fixed = fix_symmetry(proj, dry=getattr(args, "dry_run", False))
+        fixed += fix_gravity(proj, dry=getattr(args, "dry_run", False))
         if fixed:
             print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
                   f"{fixed} element(s)")
     print(f"[{'FAIL' if (errors or gate_failed) else 'OK'}] {errors} error(s), "
           f"{sum(1 for i in issues if i[0] == 'warn')} warning(s)")
     return 1 if (errors or gate_failed) else 0
+
+
+def gravity_fix(text):
+    """Rewrite physical gravity tokens in one XML file to start/end.
+
+    `hardcoded_gravity` names a value `aqlab rtl` would rewrite, but `--fix`
+    only ran the symmetry pass, so `lint --fix` left its own warning standing —
+    a fixer that reports what it cannot repair is the same bug as one that
+    repairs what it never reported. The rewrite reuses the token table `aqlab
+    rtl` uses, so the linter, the migrator and the fixer cannot disagree about
+    what a gravity value means.
+
+    The attribute *name* is matched first: a plain value sweep would also hit
+    the `text="left"` label sitting in the same file. `textAlignment` is the
+    one attribute whose RTL vocabulary is viewStart/viewEnd, not start/end.
+    Returns (new_text, hits). Pure; idempotent (start/end never re-match).
+    """
+    hits = [0]
+
+    def one(m):
+        value = m.group(2)
+        if not GRAVITY_TOKEN_HIT.search(value):
+            return m.group(0)
+        table = (TEXT_ALIGN_TOKEN if "textAlignment" in m.group(1)
+                 else GRAVITY_RTL)
+        new = re.sub(GRAVITY_TOKEN, lambda t: table[t.group(1)], value)
+        if new == value:
+            return m.group(0)
+        hits[0] += 1
+        return '%s%s"' % (m.group(1), new)
+
+    hit_re = re.compile(r'((?:\b|:)(?:gravity|layout_gravity|foregroundGravity|textAlignment)\s*=\s*")([^"]*)"')
+    return hit_re.sub(one, text), hits[0]
+
+
+def fix_gravity(proj, dry=False):
+    """Apply `gravity_fix` to every file owning an `hardcoded_gravity` finding."""
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return 0
+    # Only files the check named, so the fixer's subject is the report's subject.
+    todo = {path for path, _a, _v in hardcoded_gravity(proj)}
+    n = 0
+    for rel in sorted(todo):
+        f = Path(proj) / rel
+        try:
+            txt = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        out, hits = gravity_fix(txt)
+        if out != txt:
+            if not dry:
+                f.write_text(out, encoding="utf-8")
+            n += hits
+    return n
 
 
 def fix_symmetry(proj, dry=False):
@@ -2199,7 +2255,8 @@ def build_parser():
     s.add_argument("--fail-under-file", type=float, metavar="PCT", dest="fail_under_file",
                    help="exit non-zero when any single source file is below PCT")
     s.add_argument("--fix", action="store_true",
-                   help="add the missing padding/margin partner (as start/end)")
+                   help="add the missing padding/margin partner (as start/end) "
+                        "and rewrite physical gravity values to start/end")
     s.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="with --fix: print what would change, write nothing")
     common(s)

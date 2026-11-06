@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lint --fix` now repairs `RtlHardcoded` too.** The linter reported a
+  physical `gravity` value and told the user to run a different command to
+  repair it. `--fix` now rewrites the value to `start`/`end` (and
+  `viewStart`/`viewEnd` for `textAlignment`, the one attribute with its own
+  vocabulary), driven by the same token table `aqlab rtl` uses, and only on
+  attributes the check named — `android:text="left"` is left alone. Measured
+  on the real APK: 41 warnings -> 39, both `left|center` values rewritten,
+  second pass writes nothing.
+### Added
 - **`RtlDrawableDirs`.** A `drawable-ldrtl*` / `mipmap-ldrtl*` folder that
   mirrors nothing: empty (or only a `.gitkeep`), or holding a file that is
   byte-identical to the same-named file in the unqualified peer directory.

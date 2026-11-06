@@ -993,7 +993,7 @@ def test_hardcoded_gravity(tmp):
         A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar", quiet=True,
                                       verbose=False, fail_under=None,
                                       fail_under_file=None))
-    check("lint warns with the fix", "aqlab rtl" in out.getvalue(), out.getvalue()[:400])
+    check("lint warns with the fix", "aqlab lint --fix" in out.getvalue(), out.getvalue()[:400])
 
 
 def test_lint_fix(tmp):
@@ -1118,6 +1118,64 @@ def test_gravity_compound_token(tmp):
     check("rtl leaves a word holding the token alone",
           A.migrate_attr("android:gravity", "leftShape") is None, "")
 
+
+def test_lint_fix_gravity(tmp):
+    """`lint --fix` repairs the gravity finding it printed itself.
+
+    `--fix` used to run only the symmetry pass, so the two `left|center` values
+    the linter reported were still there after the fix, and the tool told the
+    user to run another command to repair its own warning. The sweep must also
+    leave `android:text="left"` alone: the finding is about attributes.
+    """
+    root = Path(tmp) / "gravmix"
+    res = root / "res"
+    (res / "layout").mkdir(parents=True)
+    (res / "values").mkdir()
+    (res / "values-ar").mkdir()
+    (res / "values-ar" / "strings.xml").write_text(
+        HEAD + '<string name="a">x</string></resources>', encoding="utf-8")
+    (res / "values" / "strings.xml").write_text(
+        HEAD + '<string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+    f = res / "layout" / "sel.xml"
+    f.write_text(
+        HEAD +
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <CheckedTextView android:gravity="left|center"/>\n'
+        '    <TextView android:paddingRight="4dp"/>\n'
+        '    <TextView android:text="left" android:textAlignment="right"/>\n'
+        '</LinearLayout>\n', encoding="utf-8")
+
+    out, hits = A.gravity_fix(f.read_text(encoding="utf-8"))
+    check("value sweep counts attributes only", hits == 2, str(hits))
+    check("text label untouched", 'android:text="left"' in out, out)
+    check("textAlignment rewrites to viewEnd", 'textAlignment="viewEnd"' in out, out)
+
+    args = argparse.Namespace(proj=str(root), locale="ar", quiet=True, verbose=False,
+                              fail_under=None, fail_under_file=None, fix=True,
+                              dry_run=True)
+    before = f.read_text(encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()):
+        A.cmd_lint(args)
+    check("gravity dry run writes nothing", f.read_text(encoding="utf-8") == before, "")
+
+    args.dry_run = False
+    with contextlib.redirect_stdout(io.StringIO()):
+        A.cmd_lint(args)
+    after = f.read_text(encoding="utf-8")
+    check("gravity fixed in place", 'gravity="start|center"' in after, after)
+    # The physical-only row is deliberately left alone by symmetric_fix (that is
+    # `aqlab rtl`'s job), so `--fix` must not have invented a paddingLeft here.
+    check("physical row untouched by --fix", 'paddingRight="4dp"' in after, after)
+    check("gravity findings gone", A.hardcoded_gravity(root) == [],
+          str(A.hardcoded_gravity(root)))
+
+    with contextlib.redirect_stdout(io.StringIO()) as out2:
+        A.cmd_lint(args)
+    check("gravity fix idempotent", f.read_text(encoding="utf-8") == after, after)
+    check("second pass fixes nothing", "fixed:" not in out2.getvalue(), out2.getvalue()[:200])
 
 def test_direction_pins(tmp):
     """DirectionPins: a pin over physical attrs keeps a row LTR in Arabic.
@@ -1712,6 +1770,7 @@ def main():
         test_rtl_drawable_dirs(tmp)
         test_hardcoded_gravity(tmp)
         test_gravity_compound_token(tmp)
+        test_lint_fix_gravity(tmp)
         test_lint_fix(tmp)
         test_direction_pins(tmp)
         test_rtl(proj)
