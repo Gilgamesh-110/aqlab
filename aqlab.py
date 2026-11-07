@@ -1349,8 +1349,12 @@ def hardcoded_gravity(proj):
     if not res.is_dir():
         return []
     found = []
+    # Both quote characters: Android accepts either, and `aqlab rtl` already
+    # migrates a single-quoted attribute. Reading only double-quote made
+    # a single-quoted gravity invisible here, and gravity is the one
+    # defect `aqlab rtl` deliberately leaves for the user to read.
     attr_re = re.compile(r'\b(?:android:)?(gravity|layout_gravity|foregroundGravity|'
-                         r'textAlignment)\s*=\s*"([^"]*)"')
+                         r'textAlignment)\s*=\s*([\x22\x27])([^\x22\x27]*)\2')
     for f in sorted(res.glob("**/*.xml")):
         if not any(part.startswith(("layout", "values", "menu", "anim"))
                    for part in f.relative_to(res).parts[:1]):
@@ -1360,7 +1364,7 @@ def hardcoded_gravity(proj):
         except OSError:
             continue
         for m in attr_re.finditer(txt):
-            attr, val = m.group(1), m.group(2)
+            attr, val = m.group(1), m.group(3)
             # `imageLeft` matches the old word-boundary test and is real (a
             # selection-dialog row names its slot `imageLeft` in Material). What
             # has to change is the token inside the value, so only that counts.
@@ -1826,7 +1830,10 @@ def symmetric_fix(body):
 
     Pure: body in, body out. Idempotent — a fixed body has no holes left.
     """
-    have = set(re.findall(r'\b(?:android:)?([\w.]+)\s*=\s*"', body))
+    # Both quote characters, like `symmetry_problems`: it reports a
+    # single-quoted `paddingLeft`, so the fixer has to see it too or the
+    # report names an element `--fix` can never repair.
+    have = set(re.findall(r'\b(?:android:)?([\w.]+)\s*=\s*[\x22\x27]', body))
     # An element that already uses start/end is appcompat-aware: fill the missing
     # modern side, leave its physical attributes to . An element with
     # only physical attributes is not ours to touch at all.
@@ -1837,12 +1844,12 @@ def symmetric_fix(body):
         if (left in have) == (right in have):
             continue
         have_a, miss_b = (left, right) if left in have else (right, left)
-        m = re.search(r'\b(?:android:)?%s\s*=\s*"([^"]*)"' % have_a, body)
+        m = re.search(r'\b(?:android:)?%s\s*=\s*([\x22\x27])([^\x22\x27]*)\1' % have_a, body)
         if not m:
             return body          # reported but our regex lost it: do not guess
         target = ATTR_RENAME.get(miss_b, miss_b)
         value = re.sub(GRAVITY_TOKEN, lambda t: GRAVITY_RTL[t.group(1)],
-                       m.group(1))
+                       m.group(2))
         # Right after the attribute it mirrors. Appending at the end of a 40-line
         # tag hides the pair where nobody looks; one long line stays one line.
         body = body[:m.end()] + ' android:%s="%s"' % (target, value) + body[m.end():]
@@ -2340,7 +2347,7 @@ def gravity_fix(text, only=None):
     hits = [0]
 
     def one(m):
-        value = m.group(3)
+        value = m.group(4)
         if only is not None and m.group(2) != only:
             return m.group(0)
         if not GRAVITY_TOKEN_HIT.search(value):
@@ -2351,9 +2358,13 @@ def gravity_fix(text, only=None):
         if new == value:
             return m.group(0)
         hits[0] += 1
-        return '%s%s"' % (m.group(1), new)
+        return '%s%s%s%s' % (m.group(1), m.group(3), new, m.group(3))
 
-    hit_re = re.compile(r'((?:\b|:)(gravity|layout_gravity|foregroundGravity|textAlignment)\s*=\s*")([^"]*)"')
+    # The quote char is captured, not assumed: `hardcoded_gravity` reports a
+    # single-quoted value, so the writer has to reach it and hand the file
+    # back with the quotes it came in with.
+    hit_re = re.compile(r'((?:\b|:)(gravity|layout_gravity|foregroundGravity|'
+                        r'textAlignment)\s*=\s*)([\x22\x27])([^\x22\x27]*)\3')
     return hit_re.sub(one, text), hits[0]
 
 

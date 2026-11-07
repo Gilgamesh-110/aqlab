@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`hardcoded_gravity` and both `lint --fix` writers read only double quotes.**
+  Android accepts either quote character on an attribute value, and round 14
+  widened `rewrite_xml_attrs`, `symmetry_problems` and the pin reader to match,
+  but the gravity reader and the two writers stayed on `"`. Two defects fell out,
+  in opposite directions: `gravity='left'` was never *reported*, and gravity is
+  the one finding `aqlab rtl` deliberately leaves for the user to read; while
+  `symmetry_problems` did report a single-quoted `paddingLeft` that
+  `symmetric_fix` could not see — `--fix` promised a repair it could never
+  perform. `gravity_fix` now captures the quote character and hands the file
+  back with the quotes it came in with. Measured on the real APK first: it
+  carries no single quotes, so nothing fired there and the hole stayed silent.
+  Tests 346 → 355; mutation-killed three ways (reader, `gravity_fix` regex,
+  `symmetric_fix` value regex).
+
 - **`pinNested` now reads the row's inherited axis, and both fixers edit the
   row the report named.** A pin on a container with no `orientation` — which is
   what `--fix` leaves behind once it migrates the pin's own `paddingLeft` to

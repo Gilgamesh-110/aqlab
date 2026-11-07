@@ -1429,6 +1429,61 @@ def test_single_quoted_attributes(tmp):
           pins == ["layoutDirection"], str(pins))
 
 
+def test_single_quoted_gravity_and_fix(tmp):
+    """`hardcoded_gravity` and both fixers read only double quotes.
+
+    Round 14 widened `rewrite_xml_attrs`, `symmetry_problems` and the pin reader
+    to either quote character, but the gravity reader and the two writers stayed
+    on `"`. Measured on the real APK first: it carries no single quotes, so
+    nothing fired and nothing was reported — the hole was silent there.
+
+    Two defects, in opposite directions:
+      * `hardcoded_gravity` never *reported* `gravity='left'`, and gravity is the
+        one defect `aqlab rtl` deliberately leaves for the user to read;
+      * `symmetry_problems` did report a single-quoted `paddingLeft`, while
+        `symmetric_fix` could not see the attribute — so `--fix` promised a
+        repair it could never perform, the same bug as one that repairs what it
+        never reported.
+    """
+    q = chr(39)
+    root = Path(tmp) / "sqgrav"
+    layout = root / "res" / "layout"
+    layout.mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+
+    (layout / "a.xml").write_text(
+        "<TextView android:gravity=" + q + "left" + q + ' android:textAlignment='
+        + q + "right" + q + "/>", encoding="utf-8")
+    got = A.hardcoded_gravity(root)
+    check("gravity reader sees a single-quoted value", len(got) == 2, str(got))
+    check("gravity reader reports the value", {v for _, _, v in got} == {"left", "right"},
+          str(got))
+
+    txt = (layout / "a.xml").read_text(encoding="utf-8")
+    out, hits = A.gravity_fix(txt)
+    check("gravity_fix rewrites a single-quoted value", hits == 2, str(hits))
+    check("gravity_fix keeps the quotes it came in with",
+          "gravity=" + q + "start" + q in out and "textAlignment=" + q + "viewEnd" + q in out,
+          out)
+    check("gravity_fix is idempotent", A.gravity_fix(out)[1] == 0, out)
+    check("double quotes still work", A.gravity_fix('android:gravity="left"')[0]
+          == 'android:gravity="start"', "")
+
+    # The symmetry fixer must repair the element its own report named.
+    (layout / "a.xml").write_text(
+        "<TextView android:paddingLeft=" + q + "4dp" + q + ' android:paddingStart="4dp"/>',
+        encoding="utf-8")
+    probs = A.symmetry_problems(root)
+    check("symmetry reports the single-quoted side", len(probs) == 2, str(probs))
+    body = (layout / "a.xml").read_text(encoding="utf-8").split("<", 1)[1]
+    fixed = A.symmetric_fix(body)
+    check("symmetric_fix fills the modern hole", 'android:paddingEnd="4dp"' in fixed, fixed)
+    check("symmetric_fix leaves the physical side to aqlab rtl",
+          'paddingLeft=' + q + "4dp" + q in fixed, fixed)
+
+
 def test_rtl_drawable_dirs(tmp):
     """ldrtl folders that mirror nothing: empty, or a copy of the LTR file.
 
@@ -2432,6 +2487,7 @@ def main():
         test_xliff_wrapping(tmp)
         test_symmetry_check(tmp)
         test_single_quoted_attributes(tmp)
+        test_single_quoted_gravity_and_fix(tmp)
         test_rtl_drawable_dirs(tmp)
         test_hardcoded_gravity(tmp)
         test_gravity_compound_token(tmp)
