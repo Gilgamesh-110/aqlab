@@ -2287,6 +2287,15 @@ def test_rtl_enabled(tmp):
     root = Path(tmp) / "enabled"
     res = root / "res"
     (res / "layout").mkdir(parents=True)
+    # `layoutDirection` is only a finding in a build that opted into RTL: with
+    # no switch the platform mirrors nothing and every `ltr` row renders as
+    # written. `test_rtl_enabled_gates` owns that gate and the opt-out
+    # finding, so this test only has to hold the switch on.
+    (root / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' + NL +
+        '  <application android:supportsRtl="true"/>' + NL +
+        '</manifest>', encoding="utf-8")
     (res / "layout" / "a.xml").write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"'
@@ -2364,6 +2373,118 @@ def test_rtl_enabled(tmp):
     check("a declared enum value is never a finding",
           not any(g[3] == "mirror" for g in A.rtl_enabled(root)),
           str(A.rtl_enabled(root)))
+
+
+def test_rtl_enabled_gates(tmp):
+    """`rtl_enabled` must not report a `layoutDirection` row RTL can never reach,
+    and must report the manifest that turns RTL off.
+
+    Measured on the real APK before writing this: two `ltr` rows sit on Material
+    clock/timepicker wrappers and are silent only because nothing text-like lives
+    beneath them — the reason they *may* be silent is that the manifest opts in,
+    so the gate has to be explicit. Repointing both to a locale-keyed resource
+    made them not reportable at all; with the manifest flipped to `false`, every
+    `ltr` row in the tree is unreachable by the platform and reporting it is
+    noise. The manifest is the finding then, exactly once.
+    """
+    root = Path(tmp) / "gate"
+    res = root / "res"
+    (res / "layout").mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<!-- original: <application android:supportsRtl="false"/> -->' + NL +
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' + NL +
+        '  <application android:allowBackup="true" android:supportsRtl="true"/>' + NL +
+        '</manifest>', encoding="utf-8")
+    (res / "layout" / "a.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">' + NL +
+        '  <LinearLayout android:layoutDirection="ltr">' + NL +
+        '    <TextView android:text="a"/>' + NL +
+        '  </LinearLayout>' + NL +
+        '  <TextView android:layoutDirection="@string/row_dir" android:text="b"/>' + NL +
+        '  <TextView android:layoutDirection="?attr/row_dir" android:text="c"/>' + NL +
+        '  <TextView android:textDirection="ltr" android:text="d"/>' + NL +
+        '</LinearLayout>', encoding="utf-8")
+
+    check("manifest opt-in is read", A.manifest_supports_rtl(root) is True)
+    check("a commented-out opt-out does not speak for the manifest",
+          A.manifest_supports_rtl(root) is True)
+    found = A.rtl_enabled(root)
+    check("an opted-in build reports the literal rows",
+          [g[3] for g in found if g[0] == "layoutDirection"] == ["ltr", "@string/row_dir", "?attr/row_dir"],
+          str(found))
+    check("textDirection is not gated by supportsRtl",
+          any(g[0] == "textDirection" for g in found), str(found))
+    check("an opted-in manifest is not itself a finding",
+          not any(g[0] == "supportsRtl" for g in found), str(found))
+
+    # Opting out: the rows render as written, so the manifest is the only thing
+    # worth saying, and it must be said once.
+    (root / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' + NL +
+        '  <application android:supportsRtl="false"/>' + NL +
+        '</manifest>', encoding="utf-8")
+    off = A.rtl_enabled(root)
+    check("an opt-out silences every layoutDirection row",
+          not any(g[0] == "layoutDirection" for g in off), str(off))
+    check("an opt-out is a finding of its own",
+          [g for g in off if g[0] == "supportsRtl"] ==
+          [("supportsRtl", "AndroidManifest.xml", "", "false")], str(off))
+
+    (root / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' + NL +
+        '  <application android:allowBackup="true"/>' + NL +
+        '</manifest>', encoding="utf-8")
+    check("an absent supportsRtl is not an opt-out",
+          A.manifest_supports_rtl(root) is None, str(A.manifest_supports_rtl(root)))
+    # Absent is what `aqlab rtl` is about to add, so the rows are still worth
+    # naming: none of them can follow a locale that was never switched on.
+    check("an absent supportsRtl still lets the rows be reported",
+          [g[3] for g in A.rtl_enabled(root) if g[0] == "layoutDirection"]
+          == ["ltr", "@string/row_dir", "?attr/row_dir"],
+          str(A.rtl_enabled(root)))
+    check("an absent supportsRtl is not a finding",
+          not any(g[0] == "supportsRtl" for g in A.rtl_enabled(root)))
+
+    # `lint` must key the manifest message by the attribute, not by whatever the
+    # string loop left in `where` — it reported the opt-out against
+    # `character_counter_pattern` until this was measured.
+    class Args:
+        pass
+    argv = Args()
+    argv.proj = str(root)
+    argv.dir = str(root)
+    argv.locale = "ar"
+    argv.fail_under = None
+    argv.fail_under_file = None
+    argv.verbose = False
+    argv.json = False
+    (root / "AndroidManifest.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' + NL +
+        '  <application android:supportsRtl="false"/>' + NL +
+        '</manifest>', encoding="utf-8")
+    (res / "values").mkdir(exist_ok=True)
+    (res / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL + '<resources>' + NL +
+        '  <string name="hello">hello</string>' + NL + '</resources>', encoding="utf-8")
+    (res / "values-ar").mkdir(exist_ok=True)
+    (res / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL + '<resources>' + NL +
+        '  <string name="hello">مرحبا</string>' + NL + '</resources>', encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        try:
+            A.cmd_lint(argv)
+        except SystemExit:
+            pass
+    text = out.getvalue()
+    check("the manifest message names the manifest",
+          "AndroidManifest.xml:supportsRtl" in text, text[-600:])
+    check("the manifest message is not charged to a string key",
+          "character_counter_pattern" not in text, text[-600:])
 
 
 def test_dedupe_and_styles(tmp):
@@ -2767,6 +2888,7 @@ def main():
         test_pin_drop_removes_every_pin(tmp)
         test_direction_pins(tmp)
         test_rtl_enabled(tmp)
+        test_rtl_enabled_gates(tmp)
         test_lint_fix_rtl_enabled_pin(tmp)
         test_rtl(proj)
         test_lint(proj)

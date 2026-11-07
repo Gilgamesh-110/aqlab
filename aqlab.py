@@ -1709,14 +1709,24 @@ def rtl_enabled(proj, locale="ar"):
     layouts (silent, they are the correct spelling) and two `ltr` pins, both
     already reported by `direction_pins`.
 
-    Returns [(kind, path, tag, value)] with kind "layoutDirection" or
-    "textDirection".
+    A resource reference (`@string/x`, `?attr/x`) is a value too, and a worse
+    one: `isRtlResource` in Android's `TextView` shows the platform resolves it
+    off the deprecated `Configuration`, so a locale-keyed resource never reaches
+    a widget that re-resolved after a locale change.
+
+    `layoutDirection` literals are only reported when the manifest opts into
+    RTL; when it opts out, the manifest is the finding and the rows are not.
+
+    Returns [(kind, path, tag, value)] with kind "layoutDirection",
+    "textDirection", or "supportsRtl" (path `AndroidManifest.xml`, value
+    "false").
     """
     res = Path(proj) / "res"
     if not res.is_dir():
         return []
     harmless = {"locale", "firstStrong", "anyRtl", "inherit"}
     declared = declared_direction_values(proj)
+    supports_rtl = manifest_supports_rtl(proj)
     out = []
     for f in sorted(res.glob("layout*/**/*.xml")):
         if not f.is_file():
@@ -1739,7 +1749,8 @@ def rtl_enabled(proj, locale="ar"):
                         stop = bounds[m2][0]
                         break
             subtree = txt[off:stop]
-            for m in re.finditer(r"(?<![\w.\-])((?:\w+:)?)(layoutDirection|textDirection)\s*=\s*[\x22\x27]([\w-]+)", body):
+            for m in re.finditer(r"(?<![\w.\-])((?:\w+:)?)(layoutDirection|textDirection)"
+                                 r"\s*=\s*[\x22\x27]([\w@?][\w\-./@+:]*)", body):
                 # One attribute per match, on the element that actually carries
                 # it: `body` is the start tag alone.
                 prefix, attr, val = m.group(1), m.group(2), m.group(3)
@@ -1749,6 +1760,14 @@ def rtl_enabled(proj, locale="ar"):
                     continue  # follows the locale on an RTL screen anyway
                 if attr == "layoutDirection" and val == "rtl" and looks_leaf(tag):
                     continue  # a mirrored glyph, not a container direction
+                # A `layoutDirection` literal cannot beat a locale that never
+                # turned RTL on. Measured, not assumed: the gate fires only on an
+                # explicit opt-out. An absent `supportsRtl` keeps the row
+                # reported — the default is pitfall (see `rtl`), but `lint`
+                # runs on projects the author may switch on later, and a silent
+                # row there is a defect nobody sees.
+                if attr == "layoutDirection" and supports_rtl is False:
+                    continue
                 if prefix and "." in tag:
                     continue  # a dotted class is custom: it may read its own styleable
                 # The subtree, plus the element's own tag: `walk_layout` yields
@@ -1760,7 +1779,37 @@ def rtl_enabled(proj, locale="ar"):
                         or RE_TEXT_WIDGET.match("<" + tag)):
                     continue  # see `RE_TEXT_WIDGET` — order, not language
                 out.append((attr, rel, tag, val))
+    # An opt-out is a `lint` finding, not a `--fix` one: the attribute is a
+    # build-wide switch, so the warning points at the manifest instead of
+    # promising a row rewrite.
+    if supports_rtl is False:
+        out.append(("supportsRtl", "AndroidManifest.xml", "", "false"))
     return out
+
+
+def manifest_supports_rtl(proj):
+    """`android:supportsRtl` as the manifest states it.
+
+    True/False, or None when no `<application>` writes the attribute at all.
+    None is not False: an absent attribute is what `aqlab rtl` adds, so it is
+    not a defect, while an explicit `false` is the author turning RTL off for
+    the whole build.
+    """
+    manifest = Path(proj) / "AndroidManifest.xml"
+    if not manifest.exists():
+        return None
+    txt = manifest.read_text(encoding="utf-8", errors="replace")
+    # Comments blanked first: an apktool dump keeps the original manifest in a
+    # `<!-- -->` block, and a commented-out `supportsRtl="false"` is not one.
+    live = re.sub(r"<!--.*?-->", "", txt, flags=re.DOTALL)
+    for tag, body in iter_start_tags(live):
+        if tag != "application":
+            continue
+        m = re.search(r"(?<![\w.-])supportsRtl\s*=\s*[\x22\x27](true|false)[\x22\x27]",
+                      body)
+        if m:
+            return m.group(1) == "true"
+    return None
 
 
 def rtl_drawable_dirs(proj):
@@ -2399,10 +2448,23 @@ def cmd_lint(args):
     # attributes; this is the same literal on a row that carries none, where the
     # default would have followed the language and the literal does not.
     for attr, path, tag_, val in rtl_enabled(proj, args.locale):
+        if attr == "supportsRtl":
+            # Not a row and not a `--fix` job: the switch has to be on before
+            # any row can mirror, so the message names the command that flips it.
+            # Keyed by the attribute, not by `where`: `where` is the loop's
+            # leftover string resource key and pointed the message at a string.
+            add("error", f"{path}:supportsRtl",
+                'android:supportsRtl="false" — the manifest opts out of RTL '
+                'entirely; run `aqlab rtl`')
+            continue
+        ref = val.startswith(("@", "?"))
         add("warn", f"{path}:<{tag_}>",
             f'{attr}="{val}" overrides the locale on an element with no physical '
             f'attrs — {args.locale} shows it {val}'
-            + ("; `aqlab lint --fix` drops the pin" if val == "ltr" else ""))
+            # A reference is repairable nowhere: dropping it changes which value
+            # the row picks, so the tip would promise a rewrite it cannot make.
+            + ("; `aqlab lint --fix` drops the pin" if val == "ltr" and not ref
+               else ""))
 
     # A `ldrtl` folder that mirrors nothing is not a translation problem, so it
     # is reported without the locale gate above — it costs the same in any RTL
