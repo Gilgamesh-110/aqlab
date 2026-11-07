@@ -1495,12 +1495,11 @@ def direction_pins(proj):
         # `iter_start_tags` walks the text, comments included — apktool writes
         # the original manifest into one. Blank every `<!-- -->` out first, so a
         # comment cannot speak for the manifest.
-        live = re.sub(r"<!--.*?-->", "", txt, flags=re.DOTALL)
-        for tag, body in iter_start_tags(live):
-            if tag == "application" and re.search(
-                    r'(?<![\w.-])supportsRtl\s*=\s*"false"', body):
-                out.append(("supportsRtl", "AndroidManifest.xml", ""))
-                break
+        # Same predicate the fixer reads: one spelling of "the manifest opted
+        # out", so a report never names a value `--fix` refuses to flip. It also
+        # accepts the single-quoted form, which aapt does.
+        if manifest_supports_rtl(proj) is False:
+            out.append(("supportsRtl", "AndroidManifest.xml", ""))
 
     res = Path(proj) / "res"
     if not res.is_dir():
@@ -1805,10 +1804,13 @@ def manifest_supports_rtl(proj):
     for tag, body in iter_start_tags(live):
         if tag != "application":
             continue
-        m = re.search(r"(?<![\w.-])supportsRtl\s*=\s*[\x22\x27](true|false)[\x22\x27]",
-                      body)
+        # Anchored on the attribute *name* and closed by its own quote, so a
+        # neighbour whose value merely spells `supportsRtl='false'` is not the
+        # manifest (measured: the flip landed inside `android:label`).
+        m = re.search(r"(?:^|\s)((?:[\w.-]+:)?supportsRtl\s*=\s*)"
+                      r"([\x22\x27])(true|false)\2", body)
         if m:
-            return m.group(1) == "true"
+            return m.group(3) == "true"
     return None
 
 
@@ -2414,8 +2416,11 @@ def cmd_lint(args):
     # locale and the row stays LTR in Arabic.
     for kind, where, *rest in direction_pins(proj):
         if kind == "supportsRtl":
-            add("error", where, 'android:supportsRtl="false" — the manifest opts out of '
-                                'RTL entirely; run `aqlab rtl`')
+            # Reported by rtl_enabled and nowhere else: two rules naming the
+            # same manifest printed the same error twice and counted two errors
+            # for one byte. rtl_enabled owns it because it also owns the
+            # reference-valued rows beside it.
+            pass
         elif kind == "layoutDirection":
             tag_, val = rest
             # Only `ltr` is repairable: dropping it lets the row follow the
@@ -2486,12 +2491,47 @@ def cmd_lint(args):
             pct = 100.0 * got / max(total, 1)
             tag = "  <- weakest" if f == worst[0] and pct < cov else ""
             print(f"            {f:<20} {got}/{total}  {pct:5.1f}%{tag}")
+    fixed = 0
+    if getattr(args, "fix", False):
+        # The manifest first: every row finding below is downstream of it, and a
+        # warning promising "`--fix` drops the pin" is a lie on an app whose
+        # `supportsRtl="false"` makes every pin unreachable anyway.
+        fixed += fix_supports_rtl(proj, dry=getattr(args, "dry_run", False))
+        # Pin migration first: it renames `paddingLeft` to `paddingStart`, and
+        # the symmetry pass then pairs the *new* name in the same run. Run in
+        # the other order the symmetry pass works from a stale finding whose
+        # `paddingLeft` no longer exists, so `--fix` reported four elements
+        # and wrote two (measured), leaving one run short of a clean tree.
+        fixed += fix_pin_local(proj, dry=getattr(args, "dry_run", False))
+        fixed += fix_pin_nested(proj, dry=getattr(args, "dry_run", False))
+        fixed += fix_symmetry(proj, dry=getattr(args, "dry_run", False))
+        fixed += fix_gravity(proj, dry=getattr(args, "dry_run", False))
+        if fixed:
+            print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
+                  f"{fixed} element(s)")
+
+        # `issues` was built before the repairs, so a row this run fixed would
+        # still be printed as a finding — the report and the fixer disagreeing
+        # about the same byte. The manifest case is the one that also carries an
+        # error count, so it is re-derived here; a row finding is repaired and
+        # re-read by the next run, exactly as the row fixers always behaved.
+        if fixed and manifest_supports_rtl(proj) is not False:
+            if any(key == "AndroidManifest.xml:supportsRtl"
+                   for _l, key, _m in issues):
+                issues = [i for i in issues
+                          if i[1] != "AndroidManifest.xml:supportsRtl"]
+                errors -= 1
+
+    # Reported after the repairs, not before: a fixer runs below the same
+    # `issues` list this loop reads, so printing first showed a warning the run
+    # had just repaired beside a `fixed: 1` and an error count that disagreed.
     for lvl, key, msg in issues:
         if lvl == "info" and not args.verbose:
             continue
         print(f"  [{lvl.upper()}] {key}: {msg}")
     if not issues:
         print("  clean — no hazards detected")
+
     # A threshold turns "how are we doing" into a gate. `--fail-under` counts the
     # overall number; `--fail-under-file` catches the one file dragging it down.
     gate_failed = False
@@ -2507,23 +2547,57 @@ def cmd_lint(args):
             if pct + 1e-9 < floor_file:
                 print(f"[FAIL] {f} at {pct:.1f}% is below the --fail-under-file {floor_file}%")
                 gate_failed = True
-    fixed = 0
-    if getattr(args, "fix", False):
-        # Pin migration first: it renames `paddingLeft` to `paddingStart`, and
-        # the symmetry pass then pairs the *new* name in the same run. Run in
-        # the other order the symmetry pass works from a stale finding whose
-        # `paddingLeft` no longer exists, so `--fix` reported four elements
-        # and wrote two (measured), leaving one run short of a clean tree.
-        fixed = fix_pin_local(proj, dry=getattr(args, "dry_run", False))
-        fixed += fix_pin_nested(proj, dry=getattr(args, "dry_run", False))
-        fixed += fix_symmetry(proj, dry=getattr(args, "dry_run", False))
-        fixed += fix_gravity(proj, dry=getattr(args, "dry_run", False))
-        if fixed:
-            print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
-                  f"{fixed} element(s)")
     print(f"[{'FAIL' if (errors or gate_failed) else 'OK'}] {errors} error(s), "
           f"{sum(1 for i in issues if i[0] == 'warn')} warning(s)")
     return 1 if (errors or gate_failed) else 0
+
+
+def fix_supports_rtl(proj, dry=False):
+    """Flip `android:supportsRtl="false"` to `"true"` — the one step `lint` calls
+    an error and nothing repaired.
+
+    The message names `aqlab rtl`, but that command is a whole migration: it also
+    renames every `paddingLeft` in the tree, refuses a `minSdk` under 17 and needs
+    a `res/` directory. `lint` reports the opt-out as an error, so the flip is
+    done here, on the one attribute, and nothing else moves.
+
+    Both quote characters, because aapt accepts either and the reporter does:
+    a single-quoted value was reported and survived every run. The match is
+    anchored on the attribute *name*, so a neighbour whose value merely spells
+    `supportsRtl='false'` cannot be edited in its place (measured: the flip
+    landed one attribute to the left of the real one before the anchor).
+
+    Comments are cut out and searched as separate runs, with the offset each
+    run was cut at added back: an apktool dump keeps the original manifest in a
+    `<!-- -->` block, and searching the stripped text for a body read off it
+    finds no position at all.
+
+    Returns 1 when the value changed; idempotent because `"true"` is not
+    `"false"`.
+    """
+    if manifest_supports_rtl(proj) is not False:
+        return 0
+    manifest = Path(proj) / "AndroidManifest.xml"
+    txt = manifest.read_bytes().decode("utf-8", "replace")
+    # Preceded by whitespace, never by any non-word character: `android:label=
+    # "supportsRtl='false'"` puts the same characters right after a quote, and
+    # that is a value, not an attribute of the tag (measured: the flip landed
+    # inside `android:label`). The whitespace sits outside the group, so
+    # `m.start(1)` is still the attribute name's first character.
+    pat = re.compile(r"(?:^|\s)((?:[\w.-]+:)?supportsRtl\s*=\s*)"
+                     r"([\x22\x27])false\2")
+    pos = 0
+    for seg in re.split(r"(<!--.*?-->)", txt, flags=re.DOTALL):
+        if not seg.startswith("<!--"):
+            m = pat.search(seg)
+            if m:
+                if not dry:
+                    new = (txt[:pos + m.start(1)] + m.group(1) + m.group(2)
+                           + "true" + m.group(2) + txt[pos + m.end():])
+                    manifest.write_bytes(new.encode("utf-8"))
+                return 1
+        pos += len(seg)
+    return 0
 
 
 def gravity_fix(text, only=None):
@@ -2616,7 +2690,12 @@ def fix_pin_local(proj, dry=False):
     # surplus entries fall off the end, so the lists are concatenated and the
     # walk is given the offsets to sort by.
     broken = {}
-    for kind, path, tag, val, *_names in direction_pins(proj):
+    for kind, path, *rest in direction_pins(proj):
+        # A `supportsRtl` finding names no row, so it carries three fields where
+        # the pin findings carry five; destructuring five killed the fixer.
+        if kind == "supportsRtl":
+            continue
+        tag, val = rest[0], rest[1]
         if kind in ("layoutDirection", "textDirection") and val == "ltr":
             broken.setdefault(path, []).append(tag)
     for _attr, path, tag, _val in rtl_enabled(proj):

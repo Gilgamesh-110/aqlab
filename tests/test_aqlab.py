@@ -574,6 +574,79 @@ def test_lint_fix_pin_local(tmp):
           out2.getvalue()[:600])
 
 
+def test_lint_fix_supports_rtl(tmp):
+    """`--fix` must flip the manifest opt-out it reports as an error.
+
+    `lint` calls `supportsRtl="false"` an error and named `aqlab rtl`, a command
+    that is a whole migration (minSdk gate, `res/` requirement, every
+    `paddingLeft` renamed). Probed before writing this: `lint --fix` on a tree
+    whose only defect was the manifest printed `fixed: 0` and left the error
+    standing, so the report and the fixer disagreed about what `--fix` does.
+
+    Both quotes: `supportsRtl='false'` is valid XML and aapt accepts it, and a
+    fixer that only read double quotes would repair-and-rereport it forever.
+    """
+    root = Path(tmp) / "sr"
+    res = root / "res"
+    for d in ("values", "values-ar", "layout"):
+        (res / d).mkdir(parents=True)
+    for d in ("values", "values-ar"):
+        (res / d / "strings.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<resources><string name="a">x</string></resources>', encoding="utf-8")
+    man = root / "AndroidManifest.xml"
+    man.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"' + NL +
+        ' package="com.x">' + NL +
+        '  <!-- apktool copy: <application android:supportsRtl="false"/> -->' + NL +
+        '  <application android:allowBackup="true" android:supportsRtl="false"/>' + NL +
+        '</manifest>', encoding="utf-8")
+
+    check("opt-out reported before fix",
+          any(g[0] == "supportsRtl" for g in A.direction_pins(root)))
+    check("dry run flips nothing",
+          A.fix_supports_rtl(root, dry=True) == 1 and 'supportsRtl="false"' in
+          man.read_text(encoding="utf-8"))
+    check("dry run left the manifest dirty for the real run",
+          A.fix_supports_rtl(root) == 1, "second call did not report a change")
+    txt = man.read_text(encoding="utf-8")
+    check("value flipped", 'android:supportsRtl="true"' in txt, txt)
+    check("commented copy untouched", 'apktool copy: <application android:supportsRtl="false"/>' in txt, txt)
+    check("no other byte moved", 'android:allowBackup="true"' in txt, txt)
+    check("idempotent", A.fix_supports_rtl(root) == 0)
+    check("nothing reported after fix",
+          not any(g[0] == "supportsRtl" for g in A.direction_pins(root)))
+
+    # Single quotes, and a sibling attribute carrying the same text in its value.
+    man.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' + NL +
+        "  <application android:label=\"supportsRtl='false'\" android:supportsRtl='false'/>" + NL +
+        '</manifest>', encoding="utf-8")
+    check("single-quoted opt-out reported",
+          any(g[0] == "supportsRtl" for g in A.direction_pins(root)))
+    check("single-quoted opt-out repaired", A.fix_supports_rtl(root) == 1)
+    txt = man.read_text(encoding="utf-8")
+    check("only the attribute flipped",
+          "android:supportsRtl='true'" in txt and "supportsRtl='false'" in txt, txt)
+
+    # `lint --fix` itself, not just the helper: the wiring is what regressed.
+    man.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL +
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' + NL +
+        '  <application android:supportsRtl="false"/>' + NL +
+        '</manifest>', encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar", quiet=True,
+                                      verbose=False, fail_under=None,
+                                      fail_under_file=None, fix=True, dry_run=False))
+    check("`lint --fix` flips the manifest",
+          'android:supportsRtl="true"' in man.read_text(encoding="utf-8"), out.getvalue())
+    check("`lint --fix` clears the error", "0 error(s)" in out.getvalue(), out.getvalue())
+
+
 def test_rtl(proj):
     changes = A.patch_rtl(proj)
     man = (proj / "AndroidManifest.xml").read_text(encoding="utf-8")
@@ -2889,6 +2962,7 @@ def main():
         test_direction_pins(tmp)
         test_rtl_enabled(tmp)
         test_rtl_enabled_gates(tmp)
+        test_lint_fix_supports_rtl(tmp)
         test_lint_fix_rtl_enabled_pin(tmp)
         test_rtl(proj)
         test_lint(proj)
