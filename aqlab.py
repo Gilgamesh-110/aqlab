@@ -1660,8 +1660,23 @@ def cmd_translate(args):
         per_file = {f: (sum(1 for e, _t in g), len(g)) for f, g in by_file.items()}
         rep = build_report(proj, args.locale, pct, done, total, per_file,
                            findings, 0, False, command="translate")
+        # `kept` rows were never shown to the TM: the target already had text.
+        # Counting them as coverage is right, but a report that shows 97% while
+        # the memory resolved nothing reads as "the TM works" - and the user
+        # ships the old unreviewed translations. So the report says out loud
+        # how many keys the TM was actually asked about.
         rep["translate"] = {"matched": dict(sorted(kinds.items())),
-                            "glossary": gloss}
+                            "glossary": gloss,
+                            "evaluated": total - kinds.get("kept", 0),
+                            "stale_kept": kinds.get("kept", 0)}
+    # every key had a target already, so the TM and the hook were never
+    # consulted; say it, or the next run "improves" nothing and looks green.
+    # Printed above the dry branch on purpose: a dry run is the run that is
+    # *meant* to show gaps, and it returns before the DONE line.
+    if kinds.get("kept") and not (kinds.get("exact", 0) + kinds.get("fuzzy", 0)
+                                  + kinds.get("cmd", 0)):
+        print("[NOTE] every key with a target kept it - the TM resolved nothing; "
+              "use --force to re-run the lookup")
     if sink.dry:
         print(f"[DRY] would write {done}/{total} ({pct:.1f}%) -> {out_dir}")
         sink.report()

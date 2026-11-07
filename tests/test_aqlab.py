@@ -3735,6 +3735,58 @@ def test_report_is_shared_by_scan_and_translate(tmp):
           (work / "res" / "values-ar" / "strings.xml").read_bytes() == before)
 
 
+def test_translate_reports_whether_the_tm_was_asked(tmp):
+    """A report must say how many keys the TM actually saw.
+
+    With a target present for every key nothing is looked up: the run is all
+    "kept" and 100% coverage. Printing only that number makes an empty or wrong
+    TM indistinguishable from a working one - the user reads a green report and
+    ships the old translations unreviewed.
+    """
+    NL = chr(10)
+    work = Path(tmp) / "ktm"
+    res = work / "res" / "values"
+    res.mkdir(parents=True)
+    (res / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL + "<resources>"
+        '<string name="a">Hello</string>'
+        '<string name="b">Bye</string>'
+        "</resources>", encoding="utf-8")
+    ar = work / "res" / "values-ar"
+    ar.mkdir(parents=True)
+    (ar / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>' + NL + "<resources>"
+        '<string name="a">مرحبا</string>'
+        '<string name="b">وداعاً</string>'
+        "</resources>", encoding="utf-8")
+    tm = Path(tmp) / "ktm.json"
+    tm.write_text(json.dumps({"Hello": "أهلاً"}), encoding="utf-8")
+
+    def run(force, out_name, quiet=True):
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink):
+            rc = A.cmd_translate(argparse.Namespace(
+                proj=str(work), tm=str(tm), glossary=None, locale="ar",
+                translator=None, threshold=0.85, force=force, unmatched_out=None,
+                dry_run=True, quiet=quiet, report="json",
+                out=str(Path(tmp) / out_name)))
+        check(f"translate(force={force}) exits 0", rc == 0)
+        return json.loads((Path(tmp) / out_name).read_text(encoding="utf-8")), sink.getvalue()
+
+    kept, said = run(False, "kept.json", quiet=False)
+    check("full-target run evaluated no key", kept["translate"]["evaluated"] == 0,
+          kept["translate"])
+    check("full-target run counts both as kept", kept["translate"]["stale_kept"] == 2,
+          kept["translate"])
+    check("full-target run warns the TM was not consulted",
+          "the TM resolved nothing" in said, said)
+
+    forced, _ = run(True, "forced.json")
+    check("--force reports every key as evaluated",
+          forced["translate"]["evaluated"] == 2
+          and forced["translate"]["stale_kept"] == 0, forced["translate"])
+
+
 def test_lint_requires_a_default_locale(tmp):
     """`lint` must refuse a project with no default-locale strings.
 
@@ -3827,6 +3879,7 @@ def main():
         test_fixture_locale_qualifier(tmp)
         test_report_json_and_html(tmp)
         test_report_is_shared_by_scan_and_translate(tmp)
+        test_translate_reports_whether_the_tm_was_asked(tmp)
         test_lint_requires_a_default_locale(tmp)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0
