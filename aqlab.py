@@ -28,6 +28,7 @@ import difflib
 import html
 import io
 import json
+import multiprocessing
 import os
 import re
 import shlex
@@ -1671,6 +1672,25 @@ def cmd_scan(args):
     return scan_apk(target, args)
 
 
+def parse_jobs(value):
+    """`--jobs N`: 0 is "every CPU", anything >0 is itself.
+
+    A string glob (`res/**`) is the classic way to get 4,096 workers and an
+    OOM in place of a result, so the cap is a parse error on some machines and
+    a busy machine everywhere else — pinned to the CPU count instead.
+    """
+    env = os.environ.get("AQLAB_JOBS")
+    try:
+        n = int(value if value is not None else (env or 1))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--jobs wants an integer, got {value!r}")
+    if n < 0:
+        raise argparse.ArgumentTypeError("--jobs must be >= 0")
+    if n == 0:
+        return os.cpu_count() or 1
+    return n
+
+
 def scan_project(proj, args):
     if not find_default_strings(proj):
         raise Fail("no values/strings.xml — is this a decoded project?")
@@ -1695,7 +1715,13 @@ def scan_project(proj, args):
     if sym:
         print(f"  asymmetric     : {len(sym)} side(s) set without the opposite — "
               f"offsets off-centre when the layout flips")
-    grav = hardcoded_gravity(proj)
+    jobs = parse_jobs(getattr(args, "jobs", None))
+    if jobs > 1:
+        grav = gravity_parallel(
+            [(g.relative_to(proj).as_posix(), g.read_text(encoding="utf-8", errors="replace"))
+             for g in gravity_files(proj)], jobs)
+    else:
+        grav = hardcoded_gravity(proj)
     if grav:
         print(f"  hardcoded grav : {len(grav)} value(s) pin text to a physical side")
     pins = direction_pins(proj)
@@ -1718,6 +1744,20 @@ def scan_project(proj, args):
                           "translatable": sum(1 for e in entries if e.translatable),
                           "legacyLTR": lefts, "arabic": bool(ar_dirs)}, ensure_ascii=False))
     return 0
+
+
+def gravity_parallel(sources, jobs):
+    """`hardcoded_gravity` over pre-read (relative path, text) pairs, spread.
+
+    `imap` yields in submission order, so the result is the serial result — the
+    equality is asserted in `test_gravity_jobs`, and the serial
+    path stays the only definition of what a hit is.
+    """
+    if jobs <= 1 or len(sources) < 8:
+        return [hit for pair in sources for hit in _gravity_chunk(pair)]
+    ctx = multiprocessing.get_context("spawn")
+    with ctx.Pool(min(jobs, len(sources))) as pool:
+        return [hit for chunk in pool.imap(_gravity_chunk, sources) for hit in chunk]
 
 
 def text_like_vectors(proj):
@@ -1786,10 +1826,10 @@ def hardcoded_gravity(proj):
     # defect `aqlab rtl` deliberately leaves for the user to read.
     attr_re = re.compile(r'\b(?:android:)?(gravity|layout_gravity|foregroundGravity|'
                          r'textAlignment)\s*=\s*([\x22\x27])([^\x22\x27]*)\2')
-    for f in sorted(res.glob("**/*.xml")):
-        if not any(part.startswith(("layout", "values", "menu", "anim"))
-                   for part in f.relative_to(res).parts[:1]):
-            continue
+    # `imageLeft` matches the old word-boundary test and is real (a
+    # selection-dialog row names its slot `imageLeft` in Material). What has to
+    # change is the token inside the value, so only that counts.
+    for f in gravity_files(proj):
         try:
             txt = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -1803,6 +1843,38 @@ def hardcoded_gravity(proj):
                 continue
             found.append((f.relative_to(proj).as_posix(), attr, val))
     return found
+
+
+def _gravity_chunk(pair):
+    """Gravity hits in one (relative path, text) pair.
+
+    Module level and argument-only so a `spawn` pool can pickle it. The worker
+    never reads the disk: the parent reads each file exactly once, serially,
+    and only the regex sweep is spread out.
+    """
+    attr_re = re.compile(r'\b(?:android:)?(gravity|layout_gravity|foregroundGravity|'
+                         r'textAlignment)\s*=\s*(["\x22\x27])([^\x22\x27]*)\2')
+    name, txt = pair
+    out = []
+    for m in attr_re.finditer(txt):
+        attr, val = m.group(1), m.group(3)
+        if GRAVITY_TOKEN_HIT.search(val):
+            out.append((name, attr, val))
+    return out
+
+
+def gravity_files(proj):
+    """Every layout/value/menu/anim file a gravity value can live in.
+
+    One definition for the report and the fixer: when `lint --fix` scanned a
+    wider set than the check, it rewrote files the report never named.
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return []
+    return [f for f in sorted(res.glob("**/*.xml"))
+            if any(part.startswith(("layout", "values", "menu", "anim"))
+                   for part in f.relative_to(res).parts[:1])]
 
 
 def walk_layout(txt, full=False):
@@ -3616,8 +3688,12 @@ def build_parser():
     s = sub.add_parser("scan", help="read-only report (apk or decoded dir)")
     s.add_argument("target")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--jobs", type=parse_jobs, default=None, metavar="N",
+                   help="workers for the layout sweep (0 = every CPU); "
+                        "default $AQLAB_JOBS or 1")
     common(s)
     s.set_defaults(func=cmd_scan)
+
 
     s = sub.add_parser("xliff", help="wrap format specifiers in <xliff:g> so translators cannot break them")
     s.add_argument("proj")

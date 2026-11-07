@@ -184,7 +184,7 @@ still assembles — but the summary counts them and `all` exits non-zero.
 
 | command | what it does |
 |---|---|
-| `scan <apk\|dir>` | read-only report: locales, `supportsRtl`, remaining `left/right`, coverage. `--json` for tooling. |
+| `scan <apk\|dir>` | read-only report: locales, `supportsRtl`, remaining `left/right`, coverage. `--json` for tooling, `--jobs N` to spread the layout sweep (0 = every CPU; `$AQLAB_JOBS` sets the default). |
 | `decode <apk>` | unpack an APK into an editable project. Skips `smali/` by default — see below. |
 | `rtl <dir>` | set `android:supportsRtl` and migrate `left/right` → `start/end` across `res/**`. `--dry-run` to preview. |
 | `scaffold <dir>` | create `res/values-<locale>/`, a translation TSV, and (API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. Every `values/*.xml` is read, not just `strings.xml`. `--dry-run` to preview. |

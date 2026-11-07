@@ -8,6 +8,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -1612,6 +1613,78 @@ def test_rtl_drawable_dirs(tmp):
     text = out.getvalue()
     check("lint reports empty ldrtl", "ldrtl folder is empty" in text, text[-600:])
     check("lint reports identical copy", "byte-identical to" in text, text[-600:])
+
+
+def test_gravity_jobs(tmp):
+    """`--jobs N` is a speed knob, never a behaviour.
+
+    The pool is the same regex over the same text in the same order; the day it
+    reorders, `scan --jobs` and `scan` disagree and CI contradicts a laptop.
+    """
+    root = Path(tmp) / "pool"
+    res = root / "res"
+    (res / "layout").mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>',
+        encoding="utf-8")
+    hits = 0
+    for i in range(12):
+        rows = '    <TextView android:gravity="left|center"/>\n' * (i % 3)
+        hits += i % 3
+        (res / "layout" / f"l{i:02d}.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout>\n'
+            + rows + "</LinearLayout>\n", encoding="utf-8")
+    serial = A.hardcoded_gravity(root)
+    src = [(f.relative_to(root).as_posix(),
+            f.read_text(encoding="utf-8", errors="replace"))
+           for f in A.gravity_files(root)]
+    check("the fixture really has hits", len(serial) == hits, str(serial))
+    for jobs in (2, 5, 8):
+        got = A.gravity_parallel(src, jobs)
+        check(f"--jobs {jobs} returns the serial result, in order",
+              got == serial, str(got))
+    # The pool has to be the thing under test: on the serial path `imap` would
+    # never run, and a helper that ignored `jobs` would pass every check above.
+    pool_was_used = []
+    real_pool = A.multiprocessing.get_context
+    def counted(c):
+        pool_was_used.append(c)
+        return real_pool(c)
+    A.multiprocessing.get_context = counted
+    try:
+        A.gravity_parallel(src, 4)
+    finally:
+        A.multiprocessing.get_context = real_pool
+    check("--jobs 4 actually starts a pool", pool_was_used == ["spawn"],
+          str(pool_was_used))
+    check("--jobs 1 is the serial path", A.gravity_parallel(src, 1) == serial, "")
+    # One definition of which files hold a gravity: the report and the fixer
+    # must not drift, or `--fix` rewrites files the report never named.
+    check("gravity_files sees every layout xml",
+          len(A.gravity_files(root)) == 12, str(A.gravity_files(root)))
+    (res / "layout" / "note.txt").write_text("not xml", encoding="utf-8")
+    (res / "raw").mkdir()
+    (res / "raw" / "x.xml").write_text("<x/>", encoding="utf-8")
+    check("gravity_files skips non-xml and folders outside the sweep",
+          len(A.gravity_files(root)) == 12, str(A.gravity_files(root)))
+    # `--jobs` parsing: 0 is every CPU (a 0-worker pool hangs), junk is an error
+    # and must not reach the pool as a crash.
+    check("a plain count passes through", A.parse_jobs("4") == 4, "")
+    check("0 means every CPU", A.parse_jobs("0") == (os.cpu_count() or 1),
+          str(A.parse_jobs("0")))
+    os.environ["AQLAB_JOBS"] = "3"
+    try:
+        check("$AQLAB_JOBS is the default", A.parse_jobs(None) == 3, "")
+    finally:
+        del os.environ["AQLAB_JOBS"]
+    check("no flag, no env is one worker", A.parse_jobs(None) == 1, "")
+    for bad in ("-2", "four"):
+        try:
+            A.parse_jobs(bad)
+        except argparse.ArgumentTypeError:
+            pass
+        else:
+            check(f"{bad!r} is rejected", False, "accepted")
 
 
 def test_hardcoded_gravity(tmp):
@@ -3524,6 +3597,7 @@ def main():
         test_symmetry_covered_by_modern_pair(tmp)
         test_symmetry_partial_modern_is_not_coverage(tmp)
         test_hardcoded_gravity(tmp)
+        test_gravity_jobs(tmp)
         test_gravity_compound_token(tmp)
         test_lint_fix_gravity(tmp)
         test_lint_fix(tmp)
