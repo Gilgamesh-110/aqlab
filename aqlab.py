@@ -56,6 +56,32 @@ def _tags(text):
     return sorted(set(RE_MARKUP_TAG.findall(text)))
 
 
+RE_SECTION = re.compile(r"%([0-9]+)\$")
+
+
+def _sections(fmts):
+    """Which argument numbers a value reads, with repeats dropped.
+
+    `%1$d/%2$d` and `%2$d/%1$d` are the same set of arguments and both render
+    correctly: Android fills each specifier from its own positional index, so a
+    translator reordering two numbered placeholders loses nothing. Only an index
+    the source never mentions is a defect — that one reads an argument the
+    caller did not pass. An unnumbered `%s` beside numbered specifiers is a
+    different bug (Android counts it as argument 1 anyway and throws) and keeps
+    the old order-sensitive comparison, so the answer there is None.
+    """
+    seen, out = set(), []
+    for f in fmts:
+        m = RE_SECTION.match(f)
+        if m is None:
+            return None
+        n = int(m.group(1))
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return sorted(out)
+
+
 # --------------------------------------------------------------------------
 # RTL attribute migration tables
 # --------------------------------------------------------------------------
@@ -2315,7 +2341,15 @@ def cmd_lint(args):
         if RE_BARE_PERCENT.search(RE_FORMAT.sub("", a)):
             add("error", key, "bare `%` — must be `%%` or a format specifier, aapt will reject it")
         d_fmt, a_fmt = _formats(e.text), _formats(a)
-        if d_fmt != a_fmt:
+        # Positional arguments are a set, not a sequence: writing `%2$d/%1$d`
+        # for `%1$d/%2$d` renders the counter in RTL reading order and Android
+        # fills both — it is the correct translation of `%1$d/%2$d`, and every
+        # format error on the reference APK was exactly this pair. A value that
+        # drops or invents an argument still differs as a set; that is the
+        # finding, and the message names the lists as before.
+        d_set, a_set = _sections(d_fmt), _sections(a_fmt)
+        same_args = d_set is not None and a_set is not None and d_set == a_set
+        if d_fmt != a_fmt and not same_args:
             # The count is legitimately absent from Arabic `zero`/`one`/`two`
             # ("لا عناصر", "عنصر واحد", "عنصران"), so a specifier the Arabic value
             # does not need is not a finding. Inventing one never is.

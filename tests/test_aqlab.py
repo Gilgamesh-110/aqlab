@@ -49,6 +49,8 @@ STRINGS = """<?xml version="1.0" encoding="utf-8"?>\n<resources>
     <string name="app_name">MyApp</string>
     <string name="welcome">Welcome back, %1$s</string>
     <string name="progress">Downloading %d files</string>
+    <string name="counter">%1$d/%2$d</string>
+    <string name="ratio">%1$d of %2$d</string>
     <string name="safe">OK</string>
     <string name="skip" translatable="false">debug-only</string>
     <plurals name="files">
@@ -2224,7 +2226,7 @@ def test_scaffold_apply(proj, tmp):
     tsv = tsv_path.read_text(encoding="utf-8").splitlines()
     rows = [l for l in tsv if not l.startswith("#")]
     # 4 plain strings + the `files` plural expanded to Arabic's six categories
-    check("tsv has one row per entry, plurals expanded", len(rows) == 10, str(len(rows)))
+    check("tsv has one row per entry, plurals expanded", len(rows) == 12, str(len(rows)))
     cats = [r.split("\t")[0] for r in rows if r.startswith("files|")]
     check("the categories English cannot supply get a row",
           cats == ["files|" + c for c in A.ARABIC_PLURAL_CATEGORIES], str(cats))
@@ -2324,6 +2326,50 @@ def test_lint(proj):
 """, encoding="utf-8")
     rc = A.cmd_lint(argparse.Namespace(proj=str(proj), locale="ar", verbose=True))
     check("dropped plural placeholder is not an error", rc == 0)
+
+    # Swapping two numbered specifiers is what a counter must do in RTL: the
+    # reference APK's `%1$d/%2$d` reads `%2$d/%1$d` in Arabic and both render,
+    # because Android fills each positional specifier by its own index. It was
+    # the only *error* on that APK and ten of ten format findings there.
+    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">تطبيقي</string>
+    <string name="welcome">مرحباً بعودتك، %1$s</string>
+    <string name="progress">تنزيل %d ملفات</string>
+    <string name="counter">%2$d/%1$d</string>
+    <string name="safe">جاهز</string>
+</resources>
+""", encoding="utf-8")
+    rc = A.cmd_lint(argparse.Namespace(proj=str(proj), locale="ar", verbose=True))
+    check("swapped positional specifiers are not an error", rc == 0)
+
+    # Inventing an index is still a defect: argument 3 was never passed, so the
+    # screen shows the literal `%3$d` (or throws) where the count belongs.
+    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">تطبيقي</string>
+    <string name="welcome">مرحباً بعودتك، %1$s</string>
+    <string name="progress">تنزيل %d ملفات</string>
+    <string name="ratio">%1$d من %3$d</string>
+    <string name="safe">جاهز</string>
+</resources>
+""", encoding="utf-8")
+    rc = A.cmd_lint(argparse.Namespace(proj=str(proj), locale="ar", verbose=True))
+    check("an invented argument index is still an error", rc == 1)
+
+    # An unnumbered specifier beside numbered ones is the order-sensitive case:
+    # Android numbers it from scratch and the pair is not interchangeable.
+    ar.write_text("""<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">تطبيقي</string>
+    <string name="welcome">مرحباً بعودتك، %s</string>
+    <string name="progress">تنزيل %d ملفات</string>
+    <string name="ratio">%2$d من %s</string>
+    <string name="safe">جاهز</string>
+</resources>
+""", encoding="utf-8")
+    rc = A.cmd_lint(argparse.Namespace(proj=str(proj), locale="ar", verbose=True))
+    check("an unnumbered value against a numbered source is still an error", rc == 1)
 
 
 def test_mixed_direction_is_not_a_finding():
