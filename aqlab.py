@@ -3814,6 +3814,16 @@ def _all_stages(args, proj, out):
     if args.tsv:
         stage("apply", lambda: cmd_apply(argparse.Namespace(
             proj=proj, tsv=args.tsv, locale=args.locale)))
+    if getattr(args, "tm", None):
+        # translate runs as a stage, never as an exit path: a key it cannot
+        # fill must not stop the rebuild, but a TM path that does not exist is
+        # a typo the pipeline says out loud (cmd_translate opens it).
+        _, tr_out = stage("translate", lambda: cmd_translate(argparse.Namespace(
+            proj=proj, tm=args.tm, glossary=args.glossary,
+            locale=args.locale, translator=args.translator,
+            threshold=args.threshold, force=args.translate_force,
+            unmatched_out=args.unmatched_out, report=None, out=None,
+            dry_run=False, quiet=args.quiet)))
     rc, lint_out = stage("lint", lambda: cmd_lint(argparse.Namespace(
         proj=proj, locale=args.locale, verbose=args.verbose,
         # a report here is the pipeline's own default output: `all` already
@@ -3846,6 +3856,9 @@ def _all_stages(args, proj, out):
     print("  lint    : " + (f"{counts.group(1)} error(s), {counts.group(2)} warning(s)"
                             if counts else "not run")
           + "".join(f" {n}={c}" for n, c in sorted(per_rule.items())))
+    if getattr(args, "tm", None):
+        tr = re.search(r"\[(?:DONE|DRY)\] translate: (\d+/\d+ \([\d.]+%\))", tr_out)
+        print(f"  translate: {tr.group(1) if tr else 'ran, coverage not in its output'}")
     print(f"  output  : {built.group(1) if built else out}")
     print(f"  project : {proj}")
     # A project the pipeline owns is deleted on the way out, so the summary
@@ -4015,6 +4028,18 @@ def build_parser():
                         "intend to edit code — aqlab itself never does)")
     s.add_argument("--split", help="XAPK only: which part to pipeline (qualifier "
                    "like `ar`/`arm64_v8a`, or the split file name)")
+    s.add_argument("--tm", help="fill values-<locale> from this translation memory "
+                   "before the rebuild (same file `aqlab translate --tm` takes)")
+    s.add_argument("--glossary", help="term map applied to the TM matches")
+    s.add_argument("--translator", metavar="cmd:ARGV",
+                   help="external translator hook for the keys the TM missed")
+    s.add_argument("--threshold", type=float, default=0.85,
+                   help="minimum fuzzy score 0-1 for a TM match (default 0.85)")
+    s.add_argument("--translate-force", action="store_true", dest="translate_force",
+                   help="refill every key from the TM, ignoring an existing "
+                        "values-<locale> (the APK's own shipped translations)")
+    s.add_argument("--unmatched-out", dest="unmatched_out", metavar="FILE",
+                   help="write the keys the TM could not fill as a JSON list")
     s.add_argument("--report", choices=("json", "html"),
                    help="also write the lint report (the evidence for the summary)")
     s.add_argument("--report-out", metavar="PATH",

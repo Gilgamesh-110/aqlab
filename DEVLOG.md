@@ -63,3 +63,18 @@ too; the report counts glossary_missed and the console names one.
 Tests 530->543, three mutations caught (source branch off, wrong folder, source
 dropped). Real APK (symdec, 1456 keys, 1378-row TM, 5-term glossary): 33
 rewrites, 105 rows named as unable to fire, build -> aligned APK, aapt2 lists ar.
+
+## ROUND 36 — `all` runs the translation stage
+A1 claimed draw→migrate→table→lint→rebuild, and the table was never wired
+into `all`: the only way to translate was `apply` (a TSV) or a second
+`translate` invocation on a tree `all` deletes. `--tm/--glossary/--translator/
+--threshold/--translate-force/--unmatched-out` are now an `all` stage between
+`rtl` and `lint`, held back like every other stage, and the summary carries the
+coverage (`translate: 46/1456 (3.2%)`). No `--tm` -> the pipeline is unchanged
+(asserted). `translate` gets `report=None` on purpose: lint already writes the
+pipeline's report and a second writer overwrote it.
+Tests 543->548, three mutations caught (stage removed, force dropped, summary
+line dropped). Real APK v3: 44-row TM + --force -> 46 rows written,
+`resources.arsc` carries 46 `ZZ` strings and 1388 `(ar)` resources after
+rebuild+align; without --force the same TM resolved nothing (97.5% "kept") and
+the summary said so, which is the honest number.

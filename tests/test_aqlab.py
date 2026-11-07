@@ -3002,6 +3002,78 @@ def test_all_report_and_cleanup():
     check("all: a pre-existing project dir survives",
           (Path(apk).parent / "demo-decoded" / "keep.xml").exists())
 
+    # --tm must be a stage between rtl and lint: measured on the real APK, a
+    # pipeline with a TM and no translation stage builds an APK identical to
+    # one run without it, and the summary says nothing about the gap.
+    orig = (A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build, A.cmd_translate)
+    order2, seen2 = [], {}
+
+    def rec2(name, line):
+        def f(a):
+            order2.append(name)
+            seen2[name] = a
+            print(line, flush=True)
+            return 0
+        return f
+
+    A.cmd_decode = rec2("decode", "[DONE] decoded -> x")
+    A.cmd_rtl = rec2("rtl", "[DONE] 1 file(s) updated")
+    A.cmd_translate = rec2("translate", "[DONE] translate: 46/100 (46.0%) -> x/res/values-ar/  (exact=45 fuzzy=1)")
+    A.cmd_lint = rec2("lint", "[OK] 0 error(s), 0 warning(s)")
+    A.cmd_build = rec2("build", "[DONE] built -> x-aligned.apk")
+    tm = Path(apk).parent / "tm.json"
+    tm.write_text('{"a": "b"}', encoding="utf-8")
+    um = Path(apk).parent / "unm.json"
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            A.cmd_all(argparse.Namespace(apk=str(apk), out="o.apk", tsv=None,
+                                         locale="ar", verbose=False, quiet=True,
+                                         ks=None, ks_pass="", ks_alias=None,
+                                         framework=None, force_min_sdk=False,
+                                         with_sources=False, split=None,
+                                         report="", report_out=None,
+                                         tm=str(tm), glossary=None, translator=None,
+                                         threshold=0.85, translate_force=True,
+                                         unmatched_out=str(um)))
+        out2 = buf.getvalue()
+    finally:
+        A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build, A.cmd_translate = orig
+
+    check("all: --tm runs a translate stage between rtl and lint",
+          order2 == ["decode", "rtl", "translate", "lint", "build"], str(order2))
+    check("all: --tm reaches cmd_translate with the glossary, threshold and force",
+          seen2["translate"].tm == str(tm) and seen2["translate"].threshold == 0.85
+          and seen2["translate"].force is True
+          and seen2["translate"].unmatched_out == str(um), str(seen2.get("translate")))
+    # `all` does not write a second report from translate: lint's report is the
+    # artifact, and a translate report would overwrite it
+    check("all: the translate stage writes no report of its own",
+          seen2["translate"].report is None)
+    check("all: the summary carries the coverage, not just a stage tick",
+          "translate: 46/100 (46.0%)" in out2, out2)
+
+    # no --tm: no translate stage at all (the default pipeline is unchanged)
+    order3 = []
+    A.cmd_decode = lambda a: (order3.append("decode"), 0)[1]
+    A.cmd_rtl = lambda a: (order3.append("rtl"), print("[DONE] 0 file(s) updated"), 0)[2]
+    A.cmd_translate = lambda a: (order3.append("translate"), 0)[1]
+    A.cmd_lint = lambda a: (order3.append("lint"), print("[OK] 0 error(s), 0 warning(s)"), 0)[2]
+    A.cmd_build = lambda a: (order3.append("build"), print("[DONE] built -> x"), 0)[2]
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            A.cmd_all(argparse.Namespace(apk=str(apk), out="o.apk", tsv=None,
+                                         locale="ar", verbose=False, quiet=True,
+                                         ks=None, ks_pass="", ks_alias=None,
+                                         framework=None, force_min_sdk=False,
+                                         with_sources=False, split=None,
+                                         report="", report_out=None))
+        plain_order = list(order3)
+    finally:
+        A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build, A.cmd_translate = orig
+    check("all: without --tm the pipeline is still decode/rtl/lint/build",
+          plain_order == ["decode", "rtl", "lint", "build"], str(plain_order))
+
 
 def test_all_unsigned_output_line():
     """An unsigned build must still name its artifact in the summary.
