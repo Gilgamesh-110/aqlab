@@ -52,3 +52,14 @@ and `stale_kept`; when the TM resolves nothing a `[NOTE]` names it. Printed
 above the dry-run branch, since a dry run returns before the DONE line.
 Tests 524->530 (evaluated/stale_kept on kept and forced paths + NOTE text),
 both mutation-tested.
+
+## ROUND 35 — the glossary fires on a source term, and lands in the right folder
+cmd_translate built the locale path from `res` when `res` was already
+`<proj>/res/values`, so every run wrote `res/values/values-ar/` (aapt: no
+locale). Fixed with a test that reads the real write_strings_xml argument.
+apply_glossary skipped any row whose term was not already in the translated
+text — the ordinary case, glossary=0 on a real APK. Rows now match the source
+too; the report counts glossary_missed and the console names one.
+Tests 530->543, three mutations caught (source branch off, wrong folder, source
+dropped). Real APK (symdec, 1456 keys, 1378-row TM, 5-term glossary): 33
+rewrites, 105 rows named as unable to fire, build -> aligned APK, aapt2 lists ar.
