@@ -444,6 +444,17 @@ aqlab lint proj --fix --dry-run            # plan the partner fills, gravity + p
 
 Exit code is non-zero on errors, so it drops straight into CI.
 
+### A report CI can read
+
+```
+aqlab lint proj --report json              # -> proj/aqlab-report.json
+aqlab lint proj --report html -o r.html    # one file, no CDN, opens anywhere
+```
+
+The JSON is schema-versioned (`schema: 1`) and byte-stable between runs on the
+same tree, so it diffs in a PR. Every finding carries the rule that produced it;
+the per-rule table sums to the finding list, so nothing can fall out of it.
+
 ## The other part nobody does: Arabic has six plurals, not two
 
 English has two plural forms (`one`, `other`). Arabic has **six**, and the two

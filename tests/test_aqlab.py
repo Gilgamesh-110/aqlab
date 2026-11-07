@@ -3399,6 +3399,103 @@ def test_translate_refuses_a_bad_hook(tmp):
     else:
         check("non-JSON hook output is a failure", False)
 
+
+def test_report_json_and_html(tmp):
+    """`--report json|html`: one schema'd artifact, and every finding is attributed.
+
+    A per-rule table is only worth having if a finding cannot fall out of it, so
+    the check below is that the rule counts sum to the finding count - a new
+    `add()` that forgets its rule id lands in `unknown` and still counts.
+    """
+    # `res/values` must be one mkdir: on Windows a `mkdir(parents=True)` creates
+    # `res/values` as a directory chain and a later `write_text` on it fails.
+    root = Path(tmp) / "rep"
+    (root / "res" / "values").mkdir(parents=True)
+    (root / "res" / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<resources><string name="a">Hello %s</string>'
+        '<string name="b">World</string></resources>', encoding="utf-8")
+    # `a` has a bare percent AND a format mismatch (two errors), `b` carries the
+    # same Latin text on both sides (warn).
+    (root / "res" / "values-ar").mkdir()
+    (root / "res" / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<resources><string name="a">مرحبا %</string>'
+        '<string name="b">World</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="x"/></manifest>', encoding="utf-8")
+
+    def run(**kw):
+        ns = argparse.Namespace(proj=str(root), locale="ar", quiet=True, verbose=False,
+                                fail_under=None, fail_under_file=None,
+                                report=kw.pop("report", None), out=kw.pop("out", None))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = A.cmd_lint(ns)
+        return rc, out.getvalue()
+
+    rc, text = run(report="json")
+    path = root / "aqlab-report.json"
+    check("json report written by default beside the project", path.exists(), text[-300:])
+    check("lint still fails on the error", rc == 1, f"rc={rc} out={text[-500:]}")
+    rep = json.loads(path.read_text(encoding="utf-8"))
+    check("schema version present", rep["schema"] == 1, rep.get("schema"))
+    check("tool block names the version", rep["tool"]["version"] == A.__version__, rep["tool"])
+    check("locale recorded", rep["locale"] == "ar", rep["locale"])
+    check("coverage block", rep["coverage"]["covered"] == 2, rep["coverage"])
+    check("per-file coverage", rep["coverage"]["files"]["strings.xml"]["percent"] == 100.0,
+          rep["coverage"]["files"])
+    check("error counted", rep["totals"]["errors"] == 2, rep["totals"])
+    check("warning counted", rep["totals"]["warnings"] == 1, rep["totals"])
+    rules = {r["rule"]: r for r in rep["rules"]}
+    check("format rule attributed", rules.get("format", {}).get("error") == 2, rules)
+    check("translation rule attributed", rules.get("translation", {}).get("warn") == 1, rules)
+    check("no unattributed findings", "unknown" not in rules, list(rules))
+    check("every finding has a rule", all(f["rule"] in rules for f in rep["findings"]),
+          rep["findings"])
+    check("rule counts sum to findings",
+          sum(r["error"] + r["warn"] + r["info"] for r in rep["rules"]) == len(rep["findings"]),
+          (len(rep["findings"]), rep["rules"]))
+    # Stable against a fixture: a second run writes the same bytes.
+    first = path.read_bytes()
+    run(report="json")
+    check("json report is byte-stable", path.read_bytes() == first)
+
+    rc, text = run(report="html", out=str(Path(tmp) / "r.html"))
+    page = (Path(tmp) / "r.html").read_text(encoding="utf-8")
+    check("html report honours -o", "aqlab report" in page, page[:200])
+    check("html shows the counts", "2 error(s), 1 warning(s)" in page, page[:600])
+    check("html shows the finding", "bare `%`" in page, page[-900:])
+    check("html is self-contained", "<script" not in page and "http://" not in page, "")
+
+
+def test_lint_requires_a_default_locale(tmp):
+    """`lint` must refuse a project with no default-locale strings.
+
+    The default locale was picked with `sorted(glob("values*/strings.xml"))[0]`,
+    so a tree holding only `values-ar/` compared the Arabic file against itself:
+    "2/2 translated, 0 errors, 0 warnings" on a project that is 100% untranslated
+    from the tool's point of view. A silent pass is the one failure a gate cannot
+    afford, so the answer is `None` and a loud refusal.
+    """
+    proj = Path(tmp) / "only-ar"
+    (proj / "res" / "values-ar").mkdir(parents=True)
+    (proj / "res" / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<resources><string name="a">مرحبا</string></resources>', encoding="utf-8")
+    ns = argparse.Namespace(proj=str(proj), locale="ar", quiet=True, verbose=False,
+                            fail_under=None, fail_under_file=None, report=None, out=None)
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            A.cmd_lint(ns)
+    except A.Fail as e:
+        check("lint refuses with a clear message", "decode the APK" in str(e), str(e))
+    else:
+        check("lint does not pass a project with no default locale", False, out.getvalue())
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         proj = fixture(tmp)
@@ -3461,6 +3558,8 @@ def main():
         test_scan_apk_supports_rtl(tmp)
         test_scan(proj)
         test_fixture_locale_qualifier(tmp)
+        test_report_json_and_html(tmp)
+        test_lint_requires_a_default_locale(tmp)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0
 

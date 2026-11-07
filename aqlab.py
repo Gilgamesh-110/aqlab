@@ -25,6 +25,7 @@ import argparse
 import collections
 import contextlib
 import difflib
+import html
 import io
 import json
 import os
@@ -615,8 +616,12 @@ def find_default_strings(proj):
         p = res / name
         if p.exists():
             return p
-    cands = sorted(res.glob("values*/strings.xml")) if res.is_dir() else []
-    return cands[0] if cands else None
+    # A fallback to *any* locale is worse than no answer: with only
+    # `values-ar/strings.xml` present, lint read the Arabic file as its own
+    # source, reported 100% translated and 0 findings, and a caller had no way
+    # to tell that from a clean project. The default locale is the thing lint
+    # compares against, so an absent one is `None` — `cmd_lint` raises for it.
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -2723,11 +2728,11 @@ def cmd_lint(args):
         return 1
     tr = {e.key: e for e in read_locale_entries(res, ar_dirs)}
 
-    def add(level, key, msg):
+    def add(level, key, msg, rule=None):
         nonlocal errors
         if level == "error":
             errors += 1
-        issues.append((level, key, msg))
+        issues.append((level, key, msg, rule))
 
     for key, e in src.items():
         t = tr.get(key)
@@ -2735,11 +2740,13 @@ def cmd_lint(args):
             continue
         a = t.text
         if a == e.text and RE_LATIN.search(a):
-            add("warn", key, "identical to source and contains Latin — probably untranslated")
+            add("warn", key, "identical to source and contains Latin — probably untranslated",
+                "translation")
         elif RE_ARABIC.search(e.text) is None and RE_ANY_ALNUM.search(e.text) and not RE_ARABIC.search(a):
-            add("warn", key, "no Arabic characters in the Arabic value")
+            add("warn", key, "no Arabic characters in the Arabic value", "translation")
         if RE_BARE_PERCENT.search(RE_FORMAT.sub("", a)):
-            add("error", key, "bare `%` — must be `%%` or a format specifier, aapt will reject it")
+            add("error", key, "bare `%` — must be `%%` or a format specifier, aapt will reject it",
+                "format")
         d_fmt, a_fmt = _formats(e.text), _formats(a)
         # Positional arguments are a set, not a sequence: writing `%2$d/%1$d`
         # for `%1$d/%2$d` renders the counter in RTL reading order and Android
@@ -2758,18 +2765,20 @@ def cmd_lint(args):
                         and len(a_fmt) < len(d_fmt))
             if not no_count:
                 lvl = "error" if (e.kind == "string" or len(a_fmt) > len(d_fmt)) else "warn"
-                add(lvl, key, f"format specifiers differ: source {d_fmt or '-'} vs arabic {a_fmt or '-'}")
+                add(lvl, key, f"format specifiers differ: source {d_fmt or '-'} "
+                              f"vs arabic {a_fmt or '-'}", "format")
         if e.text.endswith(" ") != a.endswith(" "):
-            add("warn", key, "leading/trailing space mismatch — concatenated strings will run together")
+            add("warn", key, "leading/trailing space mismatch — concatenated strings will run together",
+                "whitespace")
         if re.search(r"(?<!\\)'", a):
-            add("error", key, "unescaped apostrophe — use \\' inside Android string resources")
+            add("error", key, "unescaped apostrophe — use \\' inside Android string resources", "escape")
         if a[:1] in ("@", "?"):
-            add("error", key, "value starts with `@` or `?` — must be escaped as \\@ / \\?")
+            add("error", key, "value starts with `@` or `?` — must be escaped as \\@ / \\?", "escape")
         if RE_ARABIC.search(a) and RE_LATIN.search(a):
-            add("info", key, "mixed Arabic + Latin — verify order on a real device")
+            add("info", key, "mixed Arabic + Latin — verify order on a real device", "mixed-script")
         if _tags(e.text) != _tags(a):
             add("error", key, f"markup tags differ: source {_tags(e.text) or '-'} "
-                              f"vs arabic {_tags(a) or '-'}")
+                              f"vs arabic {_tags(a) or '-'}", "markup")
 
     # Coverage is "how many of the source entries have an Arabic counterpart".
     # It used to be len(tr)/len(src), which is not the same number: a correct
@@ -2807,7 +2816,7 @@ def cmd_lint(args):
         label = f"plurals/{name}"
         if not got:
             add("warn", label, f"no {args.locale} <plurals> for this name — every count "
-                               "will fall back to the source form")
+                               "will fall back to the source form", "plurals")
             continue
 
         # Which categories are required is a property of the target language, not
@@ -2824,13 +2833,13 @@ def cmd_lint(args):
             add("error", label, "missing "
                 f"{'quantity' if len(hard) == 1 else 'quantities'}: "
                 + ", ".join(f"{q} ({plural_range(args.locale, q)})" for q in hard)
-                + f" — {why}")
+                + f" — {why}", "plurals")
 
         soft = [q for q in plural_optional(args.locale) if q not in got]
         if soft:
             add("warn", label, "no "
                 + ", ".join(f"{q} ({plural_range(args.locale, q)})" for q in soft)
-                + " form — those counts use `other`")
+                + " form — those counts use `other`", "plurals")
 
         # Distinct categories carrying identical text is the tell that nobody
         # actually pluralised anything.
@@ -2841,27 +2850,29 @@ def cmd_lint(args):
         for qs in same.values():
             if len(qs) > 1:
                 add("warn", label, f"{', '.join(qs)} carry identical text — "
-                                   "the plural forms are not actually pluralised")
+                                   "the plural forms are not actually pluralised", "plurals")
 
     # Baked-in lettering in vector geometry: `lint` cannot fix it and a
     # heuristic must never fail a build, so it is a warning with the path so the
     # user can look at the drawing itself.
     for pth, n, w, h in text_like_vectors(proj):
         add("warn", pth, f"{n} paths at {w}x{h}dp — looks like lettering baked into "
-                         f"geometry; it will not mirror with the UI, check it by eye")
+                         f"geometry; it will not mirror with the UI, check it by eye",
+            "vector-text")
 
     # Android's RtlSymmetry: one side without the other renders off-centre once
     # the layout flips, and nothing in the build says so.
     for path, tag, have_a, missing_b, value in symmetry_problems(proj):
         add("warn", f"{path}:<{tag}>",
             f"{have_a}=\"{value}\" without {missing_b} — not symmetric when the "
-            f"layout flips")
+            f"layout flips", "rtl-symmetry")
 
     # RtlHardcoded: a physical side in a gravity value does not follow the
     # locale, so it has to be renamed by hand — say where.
     for path, attr, value in hardcoded_gravity(proj):
         add("warn", f"{path}:{attr}", f'"{value}" pins text to a physical side; '
-                                      f'`aqlab lint --fix` rewrites it to start/end')
+                                      f'`aqlab lint --fix` rewrites it to start/end',
+            "rtl-hardcoded")
 
     # A pinned direction on a row that also carries left/right attributes is the
     # author working around RTL instead of supporting it — the pin wins over the
@@ -2882,13 +2893,15 @@ def cmd_lint(args):
                    if val == "ltr" else "")
             add("warn", f"{where}:<{tag_}>",
                 f'layoutDirection="{val}" pins a horizontal row that already sets '
-                f'left/right attrs — it will not flip in {args.locale}{tip}')
+                f'left/right attrs — it will not flip in {args.locale}{tip}',
+                "rtl-direction")
         elif kind == "pinNested":
             tag_, val, names = rest
             add("warn", f"{where}:<{tag_}>",
                 f'inherits layoutDirection="{val}" from an ancestor and sets '
                 f'{", ".join(names)} — the ancestor pin keeps this row {val} in '
-                f'{args.locale}; `aqlab lint --fix` migrates the row, not the pin')
+                f'{args.locale}; `aqlab lint --fix` migrates the row, not the pin',
+                "rtl-direction")
         else:
             tag_, val = rest
             add("warn", f"{where}:<{tag_}>",
@@ -2898,7 +2911,7 @@ def cmd_lint(args):
                 f'textDirection="{val}" pins the text of a row that already sets '
                 f'left/right attrs — it stays {val} in {args.locale}'
                 + ('; `aqlab lint --fix` drops the pin and migrates the row'
-                   if val == 'ltr' else ''))
+                   if val == 'ltr' else ''), "rtl-direction")
 
     # RtlEnabled: a direction literal that is not a pin but still wins over the
     # locale. `direction_pins` only names the row that also carries physical
@@ -2912,7 +2925,7 @@ def cmd_lint(args):
             # leftover string resource key and pointed the message at a string.
             add("error", f"{path}:supportsRtl",
                 'android:supportsRtl="false" — the manifest opts out of RTL '
-                'entirely; run `aqlab rtl`')
+                'entirely; run `aqlab rtl`', "rtl-enabled")
             continue
         ref = val.startswith(("@", "?"))
         add("warn", f"{path}:<{tag_}>",
@@ -2921,7 +2934,7 @@ def cmd_lint(args):
             # A reference is repairable nowhere: dropping it changes which value
             # the row picks, so the tip would promise a rewrite it cannot make.
             + ("; `aqlab lint --fix` drops the pin" if val == "ltr" and not ref
-               else ""))
+               else ""), "rtl-enabled")
 
     # A `ldrtl` folder that mirrors nothing is not a translation problem, so it
     # is reported without the locale gate above — it costs the same in any RTL
@@ -2929,10 +2942,11 @@ def cmd_lint(args):
     for where, kind, detail in rtl_drawable_dirs(proj):
         if kind == "empty":
             add("warn", where, "ldrtl folder is empty — it mirrors nothing; fill it "
-                               "or delete it so the build stops looking RTL-ready")
+                               "or delete it so the build stops looking RTL-ready",
+                "rtl-drawable")
         else:
             add("warn", where, f"byte-identical to {detail}/ — an unchanged copy does "
-                               f"not mirror; redraw it or delete it")
+                               f"not mirror; redraw it or delete it", "rtl-drawable")
 
     print(f"[FINDING] lint res/values-{args.locale}: {covered}/{len(src)} translated ({cov:.1f}%)")
     # Per file only when there is more than one, so the common case stays one line.
@@ -2969,7 +2983,7 @@ def cmd_lint(args):
         # re-read by the next run, exactly as the row fixers always behaved.
         if fixed and manifest_supports_rtl(proj) is not False:
             if any(key == "AndroidManifest.xml:supportsRtl"
-                   for _l, key, _m in issues):
+                   for _l, key, _m, _r in issues):
                 issues = [i for i in issues
                           if i[1] != "AndroidManifest.xml:supportsRtl"]
                 errors -= 1
@@ -2977,7 +2991,7 @@ def cmd_lint(args):
     # Reported after the repairs, not before: a fixer runs below the same
     # `issues` list this loop reads, so printing first showed a warning the run
     # had just repaired beside a `fixed: 1` and an error count that disagreed.
-    for lvl, key, msg in issues:
+    for lvl, key, msg, _rule in issues:
         if lvl == "info" and not args.verbose:
             continue
         print(f"  [{lvl.upper()}] {key}: {msg}")
@@ -3001,7 +3015,99 @@ def cmd_lint(args):
                 gate_failed = True
     print(f"[{'FAIL' if (errors or gate_failed) else 'OK'}] {errors} error(s), "
           f"{sum(1 for i in issues if i[0] == 'warn')} warning(s)")
+    fmt = getattr(args, "report", None)
+    if fmt:
+        write_report(fmt, getattr(args, "out", None), proj, args.locale, cov,
+                     covered, len(src), per_file, issues, errors, gate_failed)
     return 1 if (errors or gate_failed) else 0
+
+
+REPORT_SCHEMA = 1
+
+
+def build_report(proj, locale, cov, covered, total, per_file, issues, errors,
+                 gate_failed=False):
+    """The lint result as plain data, so `--report` has one shape to emit.
+
+    Rule ids come from the `add()` calls. An issue added without one is not a
+    rule finding (there is none today — `test_lint` pins that), and a finding
+    whose rule id is missing would silently vanish from the per-rule table, so
+    it is grouped under `unknown` rather than dropped.
+    """
+    rows = [{"rule": r or "unknown", "level": lvl, "key": key, "message": msg}
+            for lvl, key, msg, r in issues]
+    by_rule = {}
+    for row in rows:
+        d = by_rule.setdefault(row["rule"], {"rule": row["rule"],
+                                             "error": 0, "warn": 0, "info": 0})
+        d[row["level"]] += 1
+    return {
+        "schema": REPORT_SCHEMA,
+        "tool": {"name": "aqlab", "version": __version__},
+        "project": proj.name,
+        "locale": locale,
+        "coverage": {"covered": covered, "total": total,
+                     "percent": round(cov, 2),
+                     "files": {f: {"covered": g, "total": t,
+                                   "percent": round(100.0 * g / max(t, 1), 2)}
+                               for f, (g, t) in sorted(per_file.items())}},
+        "totals": {"errors": errors,
+                   "warnings": sum(r["level"] == "warn" for r in rows),
+                   "infos": sum(r["level"] == "info" for r in rows),
+                   "gate_failed": bool(gate_failed)},
+        "rules": [by_rule[k] for k in sorted(by_rule)],
+        "findings": rows,
+    }
+
+
+def _report_html(rep):
+    """A self-contained page: no CDN, no template engine, nothing to install."""
+    esc = html.escape
+    rows = "".join(
+        f"<tr class='{esc(r['level'])}'><td>{esc(r['rule'])}</td><td>{esc(r['level'])}</td>"
+        f"<td><code>{esc(r['key'])}</code></td><td>{esc(r['message'])}</td></tr>"
+        for r in rep["findings"])
+    cov = rep["coverage"]
+    files = "".join(
+        f"<tr><td>{esc(f)}</td><td>{d['covered']}/{d['total']}</td>"
+        f"<td>{d['percent']:.1f}%</td></tr>" for f, d in cov["files"].items())
+    t = rep["totals"]
+    return (
+        "<!doctype html><meta charset='utf-8'>"
+        f"<title>aqlab report — {esc(rep['project'])}</title>"
+        "<style>body{font:14px system-ui;margin:24px;color:#111}"
+        "table{border-collapse:collapse;margin:8px 0 24px}"
+        "td,th{border:1px solid #ddd;padding:4px 8px;text-align:start}"
+        "tr.error td{background:#fee}tr.warn td{background:#fffbe6}"
+        "code{font-size:12px}</style>"
+        f"<h1>{esc(rep['project'])} <small>[{esc(rep['locale'])}]</small></h1>"
+        f"<p>aqlab {esc(rep['tool']['version'])} · schema {rep['schema']}</p>"
+        f"<p><b>Coverage {cov['covered']}/{cov['total']} ({cov['percent']:.1f}%)</b> · "
+        f"{t['errors']} error(s), {t['warnings']} warning(s)</p>"
+        "<h2>Per file</h2><table><tr><th>file</th><th>covered</th><th>%</th></tr>"
+        f"{files}</table>"
+        "<h2>Per rule</h2><table><tr><th>rule</th><th>error</th><th>warn</th>"
+        "<th>info</th></tr>"
+        + "".join(f"<tr><td>{esc(r['rule'])}</td><td>{r['error']}</td>"
+                  f"<td>{r['warn']}</td><td>{r['info']}</td></tr>" for r in rep["rules"])
+        + "</table><h2>Findings</h2><table><tr><th>rule</th><th>level</th><th>key</th>"
+        f"<th>message</th></tr>{rows or '<tr><td colspan=4>clean</td></tr>'}</table>")
+
+
+def write_report(fmt, out, *args):
+    """`--report json|html`. Without `--out` it writes beside the project."""
+    proj = args[0]
+    rep = build_report(*args)
+    if fmt == "json":
+        text, suffix = json.dumps(rep, indent=2, ensure_ascii=False), ".json"
+    elif fmt == "html":
+        text, suffix = _report_html(rep), ".html"
+    else:
+        raise Fail(f"unknown --report format `{fmt}` (json|html)")
+    path = Path(out) if out else proj / f"aqlab-report{suffix}"
+    path.write_text(text, encoding="utf-8")
+    print(f"[DONE] report: {path}")
+    return path
 
 
 def fix_supports_rtl(proj, dry=False):
@@ -3602,6 +3708,10 @@ def build_parser():
                         "and rewrite physical gravity values to start/end")
     s.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="with --fix: print what would change, write nothing")
+    s.add_argument("--report", choices=("json", "html"), metavar="{json,html}",
+                   help="write a machine-readable / browsable report")
+    s.add_argument("-o", "--out", metavar="PATH",
+                   help="report path (default: <proj>/aqlab-report.{json,html})")
     common(s)
     s.set_defaults(func=cmd_lint)
 
