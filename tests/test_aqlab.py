@@ -2970,8 +2970,12 @@ def test_all_report_and_cleanup():
     check("all: the summary names the report line", "report  :" in out, out)
     check("all: the tree it decoded is deleted afterwards",
           made and not Path(made[0]).exists(), str(made))
+    # A deleted tree must not be named as if it were still there: `project :`
+    # used to print the mkdtemp path that `finally` had already removed.
     check("all: the summary admits the tree is gone",
-          "kept    : no" in out, out)
+          "none — decoded tree removed" in out, out)
+    check("all: the summary does not print a path it deleted",
+          f"project : {made[0]}" not in out, out)
 
     # A tree the caller already had is not the pipeline's to delete: a decoded
     # project may hold edits, and `all` only ever adds to it.
@@ -3284,15 +3288,41 @@ def test_scan_apk_supports_rtl(tmp):
           "'ar'" in out["true"] or "ar" in out["true"], out["true"])
 
 
+_SCRATCH = None
+
+
 def _tmp_zip(name, entries):
-    """Write a throwaway zip into the test tmp dir and return its Path."""
-    d = Path(tempfile.mkdtemp(prefix="aqlab-layout-"))
+    """Write a throwaway zip under one scratch dir and return its Path.
+
+    It used to call mkdtemp() per zip, so every run of this file left a dozen
+    `aqlab-layout-*` directories behind in %TEMP% -- 1848 of them by the time
+    anyone looked. One dir, removed at the end of main(), is the whole fix.
+    """
+    global _SCRATCH
+    if _SCRATCH is None or not Path(_SCRATCH).is_dir():
+        _SCRATCH = tempfile.mkdtemp(prefix="aqlab-layout-")
+    d = Path(_SCRATCH)
     d.mkdir(parents=True, exist_ok=True)
     p = d / name
     with zipfile.ZipFile(p, "w") as z:
         for k, v in entries.items():
             z.writestr(k, v)
     return p
+
+
+def test_tmp_zip_shares_one_scratch_dir():
+    """`_tmp_zip` must not leave a directory per call in %TEMP%.
+
+    Measured, not assumed: the old per-call mkdtemp() had put 1848
+    aqlab-layout-* dirs in this machine's temp dir.
+    """
+    before = len(list(Path(tempfile.gettempdir()).glob("aqlab-layout-*")))
+    a = _tmp_zip("share1.apk", {"AndroidManifest.xml": b"x"})
+    b = _tmp_zip("share2.apk", {"AndroidManifest.xml": b"x"})
+    after = len(list(Path(tempfile.gettempdir()).glob("aqlab-layout-*")))
+    check("tmp zips share one scratch dir", a.parent == b.parent, str(a.parent))
+    check("tmp zips add at most one temp dir", after - before <= 1,
+          f"{before} -> {after}")
 
 
 def test_apk_layout():
@@ -3382,6 +3412,12 @@ def test_decode_refuses_container_ambiguity():
         check("decode --split: exactly one part", len(seen) == 1, str(seen))
         check("decode --split: the named part, not merely the first one",
               pulled == ["split_config.ar.apk"], str(pulled))
+        # The split is copied out of the container to a real .apk so apktool
+        # can read it. That copy is the caller's own APK at full size; keeping
+        # it turns every XAPK decode into two copies of the input on disk.
+        part = xapk.parent / "dx.part.apk"
+        check("decode --split: the extracted copy is cleaned up",
+              not part.exists(), f"left behind {part}")
     finally:
         A.apktool_cmd, A.run = orig_cmd, orig_run
 
@@ -3990,7 +4026,8 @@ def test_lint_requires_a_default_locale(tmp):
 
 
 def main():
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as _stack:
+        _stack.callback(lambda: _SCRATCH and shutil.rmtree(_SCRATCH, ignore_errors=True))
         proj = fixture(tmp)
         test_escape()
         test_mixed_direction_is_not_a_finding()
@@ -4044,6 +4081,7 @@ def main():
         test_all_report_and_cleanup()
         test_decode_sources_flag()
         test_apk_layout()
+        test_tmp_zip_shares_one_scratch_dir()
         test_split_parts_order()
         test_decode_refuses_container_ambiguity()
         test_all_unsigned_output_line()

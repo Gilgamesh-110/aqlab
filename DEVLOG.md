@@ -78,3 +78,33 @@ line dropped). Real APK v3: 44-row TM + --force -> 46 rows written,
 `resources.arsc` carries 46 `ZZ` strings and 1388 `(ar)` resources after
 rebuild+align; without --force the same TM resolved nothing (97.5% "kept") and
 the summary said so, which is the honest number.
+
+## ROUND 37 — A1 on the split path, and the temp dir it was leaking
+
+A1 was wired but only ever measured on a single APK. A hand-built XAPK
+(real base + real `split_config.ar` APK under `splits/`) now runs `all
+--split ar` end to end: decode -> rtl -> lint -> build, 29 files migrated,
+the rebuilt `resources.arsc` carries 1388 `(ar)` resources (aapt2 dump).
+
+Two leaks fell out of measuring it. `decode --split` copies the split out of
+the container to a real `.part.apk` and never removed it -- the multi-part
+path already had the `unlink`, the single-part path did not, so every XAPK
+decode left a second full-size copy of the input beside the project. Fixed in
+a `try/finally` around the apktool call; two mutations caught (unlink removed,
+unlink pointed at a neighbouring name).
+
+The bigger one was in the test suite itself: `_tmp_zip` called `mkdtemp()` per
+zip, so every run of `test_aqlab.py` left a dozen `aqlab-layout-*` dirs in
+%TEMP% -- 1848 of them, 5.6 GB, by the time anyone looked. One shared scratch
+dir, removed by an `ExitStack` callback at the end of `main()`, plus a check
+that measures the temp dir before and after (mutation caught: back to per-call
+mkdtemp).
+
+The `all` summary also printed `project :` with a path that its own `finally`
+had already deleted, and only recognised the temp tree by a regex on its name
+(a tree the caller pre-created was reported as gone too). `keep` is now
+threaded into `_all_stages` and the line says `none — decoded tree removed`.
+Mutations caught: `keep` hard-wired to True, and the old `is_dir()` probe.
+
+Tests 548->552. Real APK: 552 green, `aqlab all` on the XAPK split path
+produces a signed 84 MB APK with Arabic resources, nothing left in %TEMP%.

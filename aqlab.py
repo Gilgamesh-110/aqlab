@@ -770,7 +770,12 @@ def cmd_decode(args):
             label, member = want[0]
             tmp = Path(out).with_suffix(".part.apk")
             extract_split(args.apk, member, tmp)
-            decode_one(str(tmp), out, args)
+            try:
+                decode_one(str(tmp), out, args)
+            finally:
+                # the extracted split is our copy of the caller's APK: leaving
+                # it behind doubles the input size next to the project.
+                tmp.unlink(missing_ok=True)
             print(f"[DONE] decoded split '{label}' -> {out}")
             return 0
         # The default is every split, each into its own dir: a split APK is not
@@ -3767,14 +3772,19 @@ def cmd_all(args):
         proj = tempfile.mkdtemp(prefix="aqlab-all-")
         keep = False
     try:
-        return _all_stages(args, proj, out)
+        return _all_stages(args, proj, out, keep)
     finally:
         if not keep:
             shutil.rmtree(proj, ignore_errors=True)
 
 
-def _all_stages(args, proj, out):
-    """The pipeline proper; `cmd_all` owns the tree lifetime around it."""
+def _all_stages(args, proj, out, keep=True):
+    """The pipeline proper; `cmd_all` owns the tree lifetime around it.
+
+    `keep` is passed in because the summary is printed before the caller's
+    `finally` deletes the tree: asking the filesystem there says "exists" and
+    the summary would name a directory that is gone one line later.
+    """
 
     def stage(label, fn):
         """Run one stage, hold its output, and keep every line for the summary.
@@ -3860,12 +3870,13 @@ def _all_stages(args, proj, out):
         tr = re.search(r"\[(?:DONE|DRY)\] translate: (\d+/\d+ \([\d.]+%\))", tr_out)
         print(f"  translate: {tr.group(1) if tr else 'ran, coverage not in its output'}")
     print(f"  output  : {built.group(1) if built else out}")
-    print(f"  project : {proj}")
-    # A project the pipeline owns is deleted on the way out, so the summary
-    # would name a directory that no longer exists. Say which one it is.
-    gone = re.search(r"aqlab-all-[\w]+$", str(proj))
-    if gone:
-        print("  kept    : no — decoded tree removed (run `aqlab decode` to keep one)")
+    # The tree the pipeline owns is deleted on the way out, so naming it would
+    # point at a directory that no longer exists by the time it is read. Only a
+    # tree that survives (found on disk, or left by decode) gets a path line.
+    if keep:
+        print(f"  project : {proj}")
+    else:
+        print("  project : none — decoded tree removed (run `aqlab decode` to keep one)")
     rep = re.search(r"\[DONE\] report: (.+\.[a-z]+)\s*$", lint_out, re.M)
     if rep:
         print(f"  report  : {rep.group(1).strip()}")
