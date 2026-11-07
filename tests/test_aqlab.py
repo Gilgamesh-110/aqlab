@@ -229,6 +229,119 @@ def test_pin_nested_gravity_only(tmp):
     check("gravity-only fix idempotent", A.fix_pin_nested(root) == 0)
 
 
+def test_pin_nested_inherited_axis(tmp):
+    """A pinned row that states no orientation follows the axis around it.
+
+    Fixing a `pinNested` turns `paddingLeft` into `paddingStart`, a name that is
+    not in `ATTR_RENAME`. The pinned `LinearLayout` that opened round 16 states no
+    orientation either, so after the fix both its row shape and its physical
+    attribute were invisible and the report vanished while the layout was still
+    half-migrated.
+
+    Android lays a child out along its parent's axis, so the axis decides whether
+    a left/right means anything: under a horizontal row it does, and under a row
+    that states nothing the outer axis holds. A leaf (`TextView`, `Button`) is
+    never a row — its padding belongs to the parent — nor is a container that
+    stacks what it holds.
+    """
+    root = Path(tmp) / "pinaxis"
+    (root / "res" / "layout").mkdir(parents=True)
+    (root / "res" / "values").mkdir()
+    (root / "res" / "values" / "strings.xml").write_text(
+        HEAD + '<string name="a">x</string></resources>', encoding="utf-8")
+    f = root / "res" / "layout" / "row.xml"
+    f.write_text(
+        HEAD
+        + '<LinearLayout android:orientation="horizontal" android:layoutDirection="ltr">'
+        # states no orientation: a `wrap_content` strip, so it is a row
+        + '<LinearLayout android:paddingRight="4.0dip"/>'
+        # inside a vertical column: the column stacks it, but the row itself
+        # still runs horizontally, and would not in Arabic
+        + '<LinearLayout android:orientation="vertical">'
+        + '<LinearLayout android:paddingRight="4.0dip"/>'
+        + '</LinearLayout>'
+        # an edge pin, not a direction, and a plain `View` is never a row
+        + '<LinearLayout android:layoutDirection="locale">'
+        + '<View android:paddingRight="4.0dip"/>'
+        + '</LinearLayout>'
+        + '</LinearLayout>', encoding="utf-8")
+    pins = [g for g in A.direction_pins(root) if g[0] == "pinNested"]
+    check("inherited axis rows reported", len(pins) == 2, str(pins))
+    check("paddingRight named", all(g[4] == ("paddingRight",) for g in pins), str(pins))
+    check("the plain View is silent", all(g[2] == "LinearLayout" for g in pins), str(pins))
+
+    before = f.read_text(encoding="utf-8")
+    check("axis dry-run writes nothing",
+          A.fix_pin_nested(root, dry=True) == 2
+          and f.read_text(encoding="utf-8") == before)
+    check("axis rows fixed", A.fix_pin_nested(root) == 2)
+    after = f.read_text(encoding="utf-8")
+    check("paddingRight migrated",
+          after.count('android:paddingEnd="4.0dip"') == 2, after)
+    check("the View under the column untouched",
+          '<View android:paddingRight="4.0dip"/>' in after, after)
+    check("axis fix idempotent", A.fix_pin_nested(root) == 0)
+
+
+def test_pin_fix_skips_a_row_it_already_passed(tmp):
+    """The fixer edits the row the report named, not one it already walked past.
+
+    Both fixers carried the end of their last edit in `i` and searched the file
+    for the next row's text from there. When the reported rows are textually
+    identical, the search could still land on a row earlier in the file, and the
+    edit was applied to it a second time: the file then read correctly while two
+    reports sat on one row and the third was never touched. `walk_layout` hands
+    out the tag's own offset now, so a candidate before the cursor is skipped.
+
+    The marker row sits first and is shorter, so a look-alike of the rows after
+    it starts inside it — the exact text is absent from the remaining file.
+    """
+    root = Path(tmp) / "pinpos"
+    res = root / "res"
+    (res / "layout").mkdir(parents=True)
+    (res / "values").mkdir()
+    (res / "values" / "strings.xml").write_text(
+        HEAD + '<string name="a">x</string></resources>', encoding="utf-8")
+    twin = '<LinearLayout android:layoutDirection="ltr" android:paddingRight="4.0dip"/>'
+    marker = '<LinearLayout android:layoutDirection="ltr" android:paddingRight="2.0dip"/>'
+    f = res / "layout" / "local.xml"
+    f.write_text(HEAD + '<LinearLayout>' + marker + twin + twin + '</LinearLayout>',
+                 encoding="utf-8")
+    check("three local pins reported",
+          len([g for g in A.direction_pins(root) if g[0] == "layoutDirection"]) == 3)
+    check("local dry-run writes nothing",
+          A.fix_pin_local(root, dry=True) == 3
+          and f.read_text(encoding="utf-8").count("layoutDirection") == 3)
+    check("local fixer drops every pin", A.fix_pin_local(root) == 3)
+    after = f.read_text(encoding="utf-8")
+    check("no pin left", "layoutDirection" not in after, after)
+    check("every reported row migrated", after.count("paddingEnd") == 3, after)
+
+    # Same for the nested fixer: the first of the three rows is already migrated,
+    # and a search for the next row's text from the cursor finds that one again,
+    # sees nothing to rename, and leaves the pinned twins unrepaired.
+    g = res / "layout" / "nested.xml"
+    # All three rows are textually identical once the first one is migrated: a
+    # text search from the start finds the migrated one and stops.
+    g.write_text(
+        HEAD
+        + '<LinearLayout android:orientation="horizontal" android:layoutDirection="rtl">'
+        + '<LinearLayout android:paddingEnd="4.0dip"/>'
+        + '<LinearLayout android:paddingRight="4.0dip"/>'
+        + '</LinearLayout>', encoding="utf-8")
+    check("the twin behind the migrated row is reported",
+          len([x for x in A.direction_pins(root) if x[0] == "pinNested"]) == 1)
+    before_nested = g.read_text(encoding="utf-8")
+    check("nested fix is idempotent under dry-run",
+          A.fix_pin_nested(root, dry=True) == 1
+          and g.read_text(encoding="utf-8") == before_nested)
+    check("nested fixer reaches the row behind a migrated twin",
+          A.fix_pin_nested(root) == 1, g.read_text(encoding="utf-8"))
+    after_nested = g.read_text(encoding="utf-8")
+    check("both nested rows migrated",
+          after_nested.count('android:paddingEnd="4.0dip"/>') == 2, after_nested)
+
+
 def test_pin_nested_gravity(tmp):
     """A `gravity` under an inherited pin is repaired by the same fixer.
 
@@ -1782,9 +1895,12 @@ def test_direction_pins(tmp):
         '<LinearLayout android:paddingLeft="3.0dip" /></LinearLayout></FrameLayout>'
         '</LinearLayout></FooBar>', encoding="utf-8")
     rows = [g for g in A.direction_pins(root) if g[1].endswith("row.xml")]
-    check("pin on a self-closing row still found",
-          len(rows) == 2 and rows[-1][2] == "LinearLayout"
-          and all(g[3] == "rtl" for g in rows), str(rows))
+    # Every level states no orientation and sits under a horizontal row, so
+    # all three are laid out along that axis and all three are reported; what
+    # the trailing slash used to hide was the self-closed row being reached.
+    check("the self-closing row is still reached",
+          len(rows) == 3 and any(g[2] == "LinearLayout" and g[3] == "rtl" for g in rows),
+          str(rows))
     check("child pinning `locale` is left silent",
           not any(g[2] == "LinearLayout" and g[3] == "locale" for g in nest), str(nest))
     # The pin's holder closes before the sibling rows, so nothing after it
@@ -2324,6 +2440,8 @@ def main():
         test_lint_fix_pin_nested(tmp)
         test_pin_nested_gravity(tmp)
         test_pin_nested_gravity_only(tmp)
+        test_pin_nested_inherited_axis(tmp)
+        test_pin_fix_skips_a_row_it_already_passed(tmp)
         test_pin_nested_include(tmp)
         test_lint_fix_pin_local(tmp)
         test_direction_pins(tmp)

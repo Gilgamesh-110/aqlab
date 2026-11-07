@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`pinNested` now reads the row's inherited axis, and both fixers edit the
+  row the report named.** A pin on a container with no `orientation` — which is
+  what `--fix` leaves behind once it migrates the pin's own `paddingLeft` to
+  `paddingStart` — was silent, because the row-shape test asked the tag's name
+  and the physical test asked the rename tables. Android lays a child out along
+  its parent's axis, so a row that states nothing is a horizontal `wrap_content`
+  strip: a left/right inside it still swaps sides in Arabic, and a pinned one is
+  now reported. A `vertical` row that states nothing does not break the axis (a
+  `wrap_content` row inside a column still runs horizontally), while a leaf
+  (`TextView`, `Button`, `…TextView`) is never a row. Separately,
+  `fix_pin_local` and `fix_pin_nested` located their row with `txt.find(body)`
+  from the end of the last edit: Material writes rows that are textually
+  identical, and the edit could land on a row already passed and rewrite it a
+  second time — the file then read correctly while two reports sat on one row.
+  Both take the offset from `walk_layout`, which needed one added parameter.
 - **`pinNested` now catches a row whose only physical thing is a `gravity`
   value.** The check looked for a renamed attribute name (`paddingLeft`,
   `layout_marginRight`) under the pin, so `<LinearLayout android:gravity="left">`

@@ -65,6 +65,25 @@ def _tags(text):
 # explicit orientation is horizontal all the same.
 HORIZONTAL_BY_DEFAULT = ("LinearLayout", "RadioGroup", "TableRow")
 
+# Tags that are never a row, whatever the axis around them: a `TextView` is a
+# leaf whose padding belongs to its parent row, and a container that stacks
+# everything it holds has no left side of its own. The list is by base name, so
+# `androidx.appcompat.widget.AppCompatTextView` is covered too. A
+# `HorizontalScrollView` is deliberately absent: it runs horizontally in *every*
+# direction, so a left/right inside it still swaps sides in Arabic.
+NON_ROW_TAGS = {
+    "TextView", "Button", "EditText", "ImageView", "ImageButton", "CheckBox",
+    "RadioButton", "Switch", "ProgressBar", "SeekBar", "Space", "View",
+    "ScrollView",
+}
+# The name's own words split by case, so a custom `IconButton` or
+# `CaptionTextView` is a leaf as well.
+_BASE_WORDS = re.compile(r"[A-Z][a-z0-9]*")
+
+
+def looks_leaf(tag):
+    return bool(NON_ROW_TAGS.intersection(_BASE_WORDS.findall(tag)))
+
 ATTR_RENAME = {
     "layout_marginLeft": "layout_marginStart",
     "layout_marginRight": "layout_marginEnd",
@@ -1351,9 +1370,9 @@ def hardcoded_gravity(proj):
     return found
 
 
-def walk_layout(txt):
+def walk_layout(txt, full=False):
     """Yield (tag, body, depth, self_closing) for every start tag, depth being
-    how many elements enclose it.
+    how many elements enclose it. `full=True` adds the body's offset in `txt`.
 
     `iter_start_tags` drops closing tags, so nesting is recovered here from the
     text itself: a `/>` opens and closes at once, a `</name>` closes the
@@ -1403,7 +1422,10 @@ def walk_layout(txt):
         self_closing = attrs.rstrip().endswith("/")
         if self_closing:
             attrs = attrs.rstrip()[:-1]  # keep the `row` tests off the slash
-        yield tag, attrs, len(stack), self_closing
+        if full:
+            yield tag, attrs, len(stack), self_closing, i + 1 + end
+        else:
+            yield tag, attrs, len(stack), self_closing
         if not self_closing:
             stack.append(tag)
         i = j + 1
@@ -1448,6 +1470,13 @@ def direction_pins(proj):
 
     `layoutDirection="locale"` is not a pin — it is the default spelled out — and
     is skipped by both the local and the nested half.
+
+    The pin is not always on a row that *is* horizontal: fixing `pinNested` turns
+    `paddingLeft` into `paddingStart`, and the pin then sits on a row whose own
+    shape says nothing — its axis is the one it inherits, and that is what
+    decides whether a left/right beneath it still means anything. So an
+    ancestor's direction is tracked too, and a row with no orientation counts as
+    horizontal when the row enclosing it is.
 
     Returns [("supportsRtl", path, "")], [("layoutDirection", path, tag, value)],
     [("textDirection", path, tag, value)] and [("pinNested", path, tag, value)].
@@ -1498,6 +1527,11 @@ def direction_pins(proj):
         except OSError:
             continue
         pinned = []  # [(depth, tag, value)] still in scope
+        # [(depth, horizontal?, pinned?)]: the axis in force, and whether the
+        # direction is pinned. A `vertical` row that says nothing does not clear
+        # the axis — a child of it with no orientation is a `wrap_content` row,
+        # laid out along the horizontal axis of the row above.
+        axis = []
         for tag, body, depth, self_closing in walk_layout(txt):
             # `>=`, not `>`: the pin belongs to an element that closed as soon as a
             # new start tag appears at the same depth — its sibling is outside it,
@@ -1505,6 +1539,12 @@ def direction_pins(proj):
             # sibling was reported as inheriting a direction nobody set on it.
             while pinned and pinned[-1][0] >= depth:
                 pinned.pop()
+            while axis and axis[-1][0] >= depth:
+                axis.pop()
+            # `horizontal` here means "a left edge exists", `vertical` the
+            # opposite, `locale` makes the axis follow the locale — which is the
+            # same flip `pinNested` is about, so only a pinned axis is tracked.
+            inherited = axis[-1] if axis and axis[-1][1] else None
             # `locale` is the platform default spelled out, not a pin.
             local = None
             for kind, rx in (("layoutDirection", pin_re), ("textDirection", txt_re)):
@@ -1512,7 +1552,24 @@ def direction_pins(proj):
                 if pm:
                     local = (kind, pm.group(1))
                     break
+            if not self_closing:
+                # The row's own orientation, not its tag's default: a
+                # `LinearLayout` that states `vertical` stacks its children, and
+                # whatever it leaves unstated is a horizontal `wrap_content`
+                # strip. `TableRow` is horizontal without saying so, and the
+                # remaining tags have no `orientation` to state.
+                stated = re.search(r'(?<![\w.-])orientation\s*=\s*[\x22\x27](\w+)',
+                                   body)
+                if stated:
+                    axis.append((depth, stated.group(1) == "horizontal", False))
+                elif tag in HORIZONTAL_BY_DEFAULT:
+                    axis.append((depth, True, False))
             if local:
+                # A direction pin decides whether the axis flips, not whether it
+                # exists: a pinned vertical column still stacks its children.
+                # Recording it as horizontal is what the `row` test below
+                # already does for the row's own shape.
+                axis.append((depth, True, True))
                 while pinned and pinned[-1][0] >= depth:
                     pinned.pop()
                 # A self-closed row encloses nothing: pushing it would leak the
@@ -1521,9 +1578,12 @@ def direction_pins(proj):
                 # as inheriting a direction that no ancestor set.
                 if not self_closing:
                     pinned.append((depth, tag, local[1]))
-            # A row is horizontal when it says so, or when its tag's default
+            # A row is horizontal when it says so, when its tag's default
             # orientation is horizontal — `LinearLayout`, `RadioGroup`,
-            # `TableRow`. Everything else is a leaf or a vertical container:
+            # `TableRow` — or when it says nothing and the axis in force at it
+            # is horizontal: a `wrap_content` child of a vertical column is a
+            # row, and a child of a horizontal row is measured along that same
+            # axis. Everything else is a leaf or a vertical container:
             # a `TextView`'s own padding belongs to its parent row and is
             # reported with that row's shape, and a `ScrollView` stacks its
             # children whatever the direction. Only a pin on a *horizontal* row
@@ -1534,7 +1594,9 @@ def direction_pins(proj):
             row = (bool(re.search(r'(?<![\w.-])orientation\s*=\s*[\x22\x27]horizontal',
                                   body))
                    or (not re.search(r'(?<![\w.-])orientation\s*=', body)
-                       and tag in HORIZONTAL_BY_DEFAULT)
+                       and (tag in HORIZONTAL_BY_DEFAULT
+                            or (not looks_leaf(tag)
+                                and inherited is not None and inherited[0])))
                    or tag == "include")
             # A local pin judges the renamed half alone: a row that pins its own
             # direction already opted out of the locale, and when only its text
@@ -2334,10 +2396,13 @@ def fix_pin_local(proj, dry=False):
         except OSError:
             continue
         out, i, done = [], 0, 0
-        for tag, body, _depth, _sc in walk_layout(txt):
+        # The offset comes from the walk: a start tag repeats its neighbour's
+        # text often enough (`android:orientation="horizontal"` opens half of
+        # Material), and `find` from the last edit then lands on the wrong row —
+        # the reported one kept its pin while a sibling was edited in its place.
+        for tag, body, _depth, _sc, pos in walk_layout(txt, full=True):
             if not wanted:
                 break
-            pos = txt.find(body, i)
             if pos < 0 or tag != wanted[0] or not LOCAL_PIN_RE.search(body):
                 continue
             new_body = LOCAL_PIN_RE.sub("", body)
@@ -2408,10 +2473,11 @@ def fix_pin_nested(proj, dry=False):
         # actually changed: a row whose only physical attribute was already
         # migrated stays in the queue instead of swallowing the next one's slot.
         out, i, done = [], 0, 0
-        for tag, body, _depth, _sc in walk_layout(txt):
+        # Same reason as `fix_pin_local`: the walk knows where the tag starts,
+        # and searching for its text finds the first row that looks like it.
+        for tag, body, _depth, _sc, pos in walk_layout(txt, full=True):
             if not wanted:
                 break
-            pos = txt.find(body, i)
             # A row that sets its own direction breaks the chain, so it is never
             # `pinNested` and must not consume the next reported row's slot —
             # found by a `layoutDirection="locale"` row sitting between two real
