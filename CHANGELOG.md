@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`pinNested` now catches a row whose only physical thing is a `gravity`
+  value.** The check looked for a renamed attribute name (`paddingLeft`,
+  `layout_marginRight`) under the pin, so `<LinearLayout android:gravity="left">`
+  with no padding was under an ancestor `layoutDirection="ltr"` and reported by
+  nothing: `hardcoded_gravity` does not walk ancestors. `lint --fix` rewrites
+  the gravity value now, and a lightly-pinned row under a pinned container is
+  reported once as a `pinNested`, not twice. A leaf (`TextView`) or a vertical
+  container stays out: its padding belongs to its parent row, and its children
+  do not move with the direction.
 - **`lint --fix` now repairs an `<include>` that renders under a direction pin.**
   `direction_pins` can only name the include tag it sees, so a `paddingLeft`
   living inside the included layout — the layout the pin actually keeps LTR —

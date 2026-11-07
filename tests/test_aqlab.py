@@ -188,6 +188,47 @@ def test_pin_nested_include(tmp):
           and 'android:layoutDirection="ltr"' in row.read_text(encoding="utf-8"))
 
 
+def test_pin_nested_gravity_only(tmp):
+    """A row whose *only* physical thing is a gravity value is still a pin.
+
+    Round 16: `direction_pins` looked for a renamed attribute name under the
+    pin, so a row (<LinearLayout, not a leaf TextView) carrying only a gravity — no padding,
+    no margin — was
+    under an ancestor `layoutDirection="ltr"` and reported by nothing:
+    `hardcoded_gravity` does not walk ancestors, and the pin check wanted a
+    name from `ATTR_RENAME`. The row stays left-aligned in Arabic.
+    """
+    root = Path(tmp) / "pingravonly"
+    (root / "res" / "layout").mkdir(parents=True)
+    (root / "res" / "values").mkdir()
+    (root / "res" / "values" / "strings.xml").write_text(
+        HEAD + '<string name="a">x</string></resources>', encoding="utf-8")
+    f = root / "res" / "layout" / "row.xml"
+    f.write_text(
+        HEAD
+        + '<LinearLayout android:layoutDirection="ltr">'
+        + '<LinearLayout android:gravity="left|center"/>'
+        + '<LinearLayout android:gravity="start"/>'
+        + '<LinearLayout android:textAlignment="viewEnd"/>'
+        + '</LinearLayout>', encoding="utf-8")
+    pins = [g for g in A.direction_pins(root) if g[0] == "pinNested"]
+    check("gravity-only row under a pin is reported", len(pins) == 1, str(pins))
+    check("finding names the gravity",
+          pins and pins[0][4] == ("gravity",), str(pins))
+
+    before = f.read_text(encoding="utf-8")
+    check("gravity-only dry-run writes nothing",
+          A.fix_pin_nested(root, dry=True) == 1 and f.read_text(encoding="utf-8") == before)
+    check("gravity-only row fixed", A.fix_pin_nested(root) == 1)
+    after = f.read_text(encoding="utf-8")
+    check("gravity value rewritten to start",
+          'android:gravity="start|center"' in after, after)
+    check("start-valued sibling untouched", 'android:gravity="start"/>' in after, after)
+    check("viewEnd sibling untouched",
+          'android:textAlignment="viewEnd"/>' in after, after)
+    check("gravity-only fix idempotent", A.fix_pin_nested(root) == 0)
+
+
 def test_pin_nested_gravity(tmp):
     """A `gravity` under an inherited pin is repaired by the same fixer.
 
@@ -2282,6 +2323,7 @@ def main():
         test_lint_fix(tmp)
         test_lint_fix_pin_nested(tmp)
         test_pin_nested_gravity(tmp)
+        test_pin_nested_gravity_only(tmp)
         test_pin_nested_include(tmp)
         test_lint_fix_pin_local(tmp)
         test_direction_pins(tmp)

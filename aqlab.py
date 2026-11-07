@@ -1482,7 +1482,15 @@ def direction_pins(proj):
     pin_re = re.compile(r'(?<![\w.-])(?:android:|app:)?layoutDirection\s*=\s*[\x22\x27](?!locale)(ltr|rtl)[\x22\x27]')
     txt_re = re.compile(r'(?<![\w.-])(?:android:|app:)?textDirection\s*=\s*[\x22\x27](?!locale)(ltr|rtl)[\x22\x27]')
     any_dir_re = re.compile(r'(?<![\w.-])(?:android:|app:)?(?:layout|text)Direction\s*=')
-    phys_re = re.compile(r"(?<![\w.-])(?:android|app):(%s)\s*=" % "|".join(ATTR_RENAME))
+    # A physical name *or* a physical value: `gravity="left"` is the same defect
+    # with the direction in the value instead of the name, and `--fix` repairs
+    # it. Without the value half here, a child row carrying only a gravity under
+    # an ancestor pin was reported by neither rule: `direction_pins` wanted a
+    # renamed attribute, and `hardcoded_gravity` does not look at ancestors.
+    phys_re = re.compile(
+        r"(?<![\w.-])(?:android|app):(%s)\s*=" % "|".join(ATTR_RENAME)
+        + r"|(?<![\w.-])(%s)\s*=\s*[\x22\x27][^\x22\x27]*\b(?:left|right)\b"
+          % "|".join(GRAVITY_ATTRS | TEXT_ALIGN_ATTRS))
 
     for f in sorted(res.glob("layout*/*.xml")):
         try:
@@ -1513,36 +1521,41 @@ def direction_pins(proj):
                 # as inheriting a direction that no ancestor set.
                 if not self_closing:
                     pinned.append((depth, tag, local[1]))
-            # A row is horizontal when it says so, or when it is a
-            # `LinearLayout`/`RadioGroup`/`TableRow` that left the orientation to
-            # the default — horizontal for all three. A bare `<include>` counts
-            # only when it carries the physical attribute itself: the row it
-            # pulls in lives in another file and is linted there.
-            row = ('orientation="horizontal"' in body
+            # A row is horizontal when it says so, or when its tag's default
+            # orientation is horizontal — `LinearLayout`, `RadioGroup`,
+            # `TableRow`. Everything else is a leaf or a vertical container:
+            # a `TextView`'s own padding belongs to its parent row and is
+            # reported with that row's shape, and a `ScrollView` stacks its
+            # children whatever the direction. Only a pin on a *horizontal* row
+            # moves the axis, so only that is a finding.
+            # A bare `<include>` counts only when it carries the physical
+            # attribute itself: the row it pulls in lives in another file and is
+            # linted there.
+            row = (bool(re.search(r'(?<![\w.-])orientation\s*=\s*[\x22\x27]horizontal',
+                                  body))
                    or (not re.search(r'(?<![\w.-])orientation\s*=', body)
-                       and (tag in HORIZONTAL_BY_DEFAULT or tag == "include")))
-            # `gravity` and `textAlignment` are the two physical attrs whose fix
-            # is a value rewrite rather than a rename, so they are collected
-            # separately: `pinNested` has to tell the fixer which pass to run.
-            # The names travel with the finding: the warning says which attrs
-            # the row carries, so a reader sees `gravity` beside `paddingLeft`.
-            # `phys_re` cannot see `gravity` (it is not in `ATTR_RENAME`), so it
-            # is collected here rather than widening that table for one check.
-            phys_names = tuple(m.group(1) for m in phys_re.finditer(body))
-            phys = bool(phys_names)
-            # A `gravity` is not a physical *attribute* for the local pin: the
-            # row already flips with the locale, and only its text align is
-            # stuck — that is `RtlHardcoded`, and `--fix` repairs it. Added
-            # here it made the rtl-mirror row a second, bogus pin finding.
-            grav_names = tuple(a for a in GRAVITY_ATTRS | TEXT_ALIGN_ATTRS
-                               if re.search(r'(?<![\w.-])(?:android:)?%s\s*='
-                                            % a, body))
-            # An `<include>` has neither text nor gravity; the only thing that
-            # makes one relevant is the padding/margin it carries itself.
-            if tag == "include" and not phys:
-                continue
+                       and tag in HORIZONTAL_BY_DEFAULT)
+                   or tag == "include")
+            # A local pin judges the renamed half alone: a row that pins its own
+            # direction already opted out of the locale, and when only its text
+            # align is stuck that is `RtlHardcoded`, which owns it and knows the
+            # physical-token rule. Under an inherited pin both halves count — the
+            # row cannot follow the locale any more, so a physical token in a
+            # gravity keeps the text on one side and has to be reported.
+            phys_names = tuple(m.group(1) or m.group(2) for m in phys_re.finditer(body))
+            if local:
+                phys = any(m.group(1) for m in phys_re.finditer(body))
+            else:
+                phys = bool(phys_names)
             if not phys or not row:
                 continue
+            # A local pin and an inherited one are not the same defect: a row
+            # pinning its *own* direction already opted out of the locale and
+            # `--fix` has a decision to make about it (drop an `ltr` pin), while
+            # an inherited pin is only visible through the physical attrs the
+            # row itself carries. Reporting a locally pinned row under the
+            # inherited one as well double-counts it — and the rtl-mirror row
+            # came back as a `pinNested` it never was.
             chain = None if local else (pinned[-1][2] if pinned else None)
             if local:
                 kind, val = local
@@ -1553,7 +1566,8 @@ def direction_pins(proj):
                 # The attribute names travel with the finding: the fixer has to
                 # migrate exactly what the report named, and the row may hold a
                 # padding and a gravity at once.
-                names = tuple(sorted(phys_names + grav_names))
+                names = tuple(sorted({m.group(1) or m.group(2)
+                                      for m in phys_re.finditer(body)}))
                 out.append(("pinNested", f.relative_to(proj).as_posix(), tag,
                             chain, names))
     return out
@@ -2376,9 +2390,11 @@ def fix_pin_nested(proj, dry=False):
     if not res.is_dir():
         return 0
     broken = {}
-    for kind, path, tag, _val, names in direction_pins(proj):
-        if kind == "pinNested":
-            broken.setdefault(path, []).append((tag, names))
+    for finding in direction_pins(proj):
+        if finding[0] != "pinNested":
+            continue
+        _kind, path, tag, _val, names = finding
+        broken.setdefault(path, []).append((tag, names))
     n = 0
     pinned_includes = []  # [(path, target_rel)] walked after the loop
     for rel, wanted in sorted(broken.items()):
