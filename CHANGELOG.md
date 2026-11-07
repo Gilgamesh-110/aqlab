@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`supportsRtl="false"` is read from the manifest, not from any text that
+  looks like it.** The check now walks `<application>` tags and ignores
+  `<!-- ... -->` blocks first, so an apktool dump whose comment quotes the
+  original manifest, or a `<activity>` carrying the attribute, no longer reports
+  an app that is already correct. Real APK unchanged: 41 warnings / 1 error, 0
+  `supportsRtl` findings — its manifest says `true`.
+
 ### Added
 - **`lint --fix` drops a local `layoutDirection="ltr"` pin.** A pin on the row
   itself is the author turning RTL off for that row to keep its `paddingLeft`

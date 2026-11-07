@@ -1423,6 +1423,27 @@ def test_direction_pins(tmp):
     check("supportsRtl=true not flagged",
           not any(g[0] == "supportsRtl" for g in A.direction_pins(root)))
 
+    # An apktool dump keeps the original manifest in a comment. A `false` there
+    # is not a manifest that opted out, and reporting it would send the user to
+    # `aqlab rtl` on an app that is already correct.
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><!-- <application android:supportsRtl="false"/> -->'
+        '<application android:supportsRtl="true"/></manifest>', encoding="utf-8")
+    check("supportsRtl=false inside a comment is not a finding",
+          not any(g[0] == "supportsRtl" for g in A.direction_pins(root)),
+          str(A.direction_pins(root)))
+
+    # The value on a tag that is not `<application>` is not the manifest opt-out
+    # either — a `<meta-data>` or an `<activity>` carrying it changes nothing.
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><activity android:supportsRtl="false"/>'
+        '<application android:supportsRtl="true"/></manifest>', encoding="utf-8")
+    check("supportsRtl=false off <application> is not a finding",
+          not any(g[0] == "supportsRtl" for g in A.direction_pins(root)),
+          str(A.direction_pins(root)))
+
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar", quiet=True,

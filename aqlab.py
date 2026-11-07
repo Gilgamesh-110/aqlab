@@ -1453,8 +1453,18 @@ def direction_pins(proj):
     manifest = Path(proj) / "AndroidManifest.xml"
     if manifest.exists():
         txt = manifest.read_text(encoding="utf-8", errors="replace")
-        if re.search(r'supportsRtl\s*=\s*"false"', txt):
-            out.append(("supportsRtl", "AndroidManifest.xml", ""))
+        # Guarded by the tag itself: an apktool dump carries the original
+        # manifest in a `<!-- ... -->` block, and a comment saying
+        # `supportsRtl="false"` is not a manifest that opts out.
+        # `iter_start_tags` walks the text, comments included — apktool writes
+        # the original manifest into one. Blank every `<!-- -->` out first, so a
+        # comment cannot speak for the manifest.
+        live = re.sub(r"<!--.*?-->", "", txt, flags=re.DOTALL)
+        for tag, body in iter_start_tags(live):
+            if tag == "application" and re.search(
+                    r'(?<![\w.-])supportsRtl\s*=\s*"false"', body):
+                out.append(("supportsRtl", "AndroidManifest.xml", ""))
+                break
 
     res = Path(proj) / "res"
     if not res.is_dir():
