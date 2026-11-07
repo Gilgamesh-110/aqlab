@@ -1251,7 +1251,7 @@ def scan_project(proj, args):
             print(f"  supportsRtl    : false — Arabic gets the LTR layout; "
                   f"run `aqlab rtl`")
         else:
-            tag_, val = _rest
+            tag_, val = _rest[0], _rest[1]
             print(f"  direction pin  : {where}:<{tag_}> layoutDirection=\"{val}\" on a "
                   f"horizontal row with physical attrs")
     vec = text_like_vectors(proj)
@@ -1518,7 +1518,22 @@ def direction_pins(proj):
             row = ('orientation="horizontal"' in body
                    or (not re.search(r'(?<![\w.-])orientation\s*=', body)
                        and (tag in HORIZONTAL_BY_DEFAULT or tag == "include")))
-            phys = bool(phys_re.search(body))
+            # `gravity` and `textAlignment` are the two physical attrs whose fix
+            # is a value rewrite rather than a rename, so they are collected
+            # separately: `pinNested` has to tell the fixer which pass to run.
+            # The names travel with the finding: the warning says which attrs
+            # the row carries, so a reader sees `gravity` beside `paddingLeft`.
+            # `phys_re` cannot see `gravity` (it is not in `ATTR_RENAME`), so it
+            # is collected here rather than widening that table for one check.
+            phys_names = tuple(m.group(1) for m in phys_re.finditer(body))
+            phys = bool(phys_names)
+            # A `gravity` is not a physical *attribute* for the local pin: the
+            # row already flips with the locale, and only its text align is
+            # stuck — that is `RtlHardcoded`, and `--fix` repairs it. Added
+            # here it made the rtl-mirror row a second, bogus pin finding.
+            grav_names = tuple(a for a in GRAVITY_ATTRS | TEXT_ALIGN_ATTRS
+                               if re.search(r'(?<![\w.-])(?:android:)?%s\s*='
+                                            % a, body))
             # An `<include>` has neither text nor gravity; the only thing that
             # makes one relevant is the padding/margin it carries itself.
             if tag == "include" and not phys:
@@ -1532,7 +1547,12 @@ def direction_pins(proj):
             elif chain and not any_dir_re.search(body):
                 # A child that sets its own direction breaks the chain: it and
                 # everything under it follow that value, not the outer pin.
-                out.append(("pinNested", f.relative_to(proj).as_posix(), tag, chain))
+                # The attribute names travel with the finding: the fixer has to
+                # migrate exactly what the report named, and the row may hold a
+                # padding and a gravity at once.
+                names = tuple(sorted(phys_names + grav_names))
+                out.append(("pinNested", f.relative_to(proj).as_posix(), tag,
+                            chain, names))
     return out
 
 
@@ -2145,11 +2165,11 @@ def cmd_lint(args):
                 f'layoutDirection="{val}" pins a horizontal row that already sets '
                 f'left/right attrs — it will not flip in {args.locale}{tip}')
         elif kind == "pinNested":
-            tag_, val = rest
+            tag_, val, names = rest
             add("warn", f"{where}:<{tag_}>",
                 f'inherits layoutDirection="{val}" from an ancestor and sets '
-                f'left/right attrs — the ancestor pin keeps this row {val} in '
-                f'{args.locale}')
+                f'{", ".join(names)} — the ancestor pin keeps this row {val} in '
+                f'{args.locale}; `aqlab lint --fix` migrates the row, not the pin')
         else:
             tag_, val = rest
             add("warn", f"{where}:<{tag_}>",
@@ -2199,10 +2219,15 @@ def cmd_lint(args):
                 gate_failed = True
     fixed = 0
     if getattr(args, "fix", False):
-        fixed = fix_symmetry(proj, dry=getattr(args, "dry_run", False))
-        fixed += fix_gravity(proj, dry=getattr(args, "dry_run", False))
-        fixed += fix_pin_local(proj, dry=getattr(args, "dry_run", False))
+        # Pin migration first: it renames `paddingLeft` to `paddingStart`, and
+        # the symmetry pass then pairs the *new* name in the same run. Run in
+        # the other order the symmetry pass works from a stale finding whose
+        # `paddingLeft` no longer exists, so `--fix` reported four elements
+        # and wrote two (measured), leaving one run short of a clean tree.
+        fixed = fix_pin_local(proj, dry=getattr(args, "dry_run", False))
         fixed += fix_pin_nested(proj, dry=getattr(args, "dry_run", False))
+        fixed += fix_symmetry(proj, dry=getattr(args, "dry_run", False))
+        fixed += fix_gravity(proj, dry=getattr(args, "dry_run", False))
         if fixed:
             print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
                   f"{fixed} element(s)")
@@ -2211,7 +2236,7 @@ def cmd_lint(args):
     return 1 if (errors or gate_failed) else 0
 
 
-def gravity_fix(text):
+def gravity_fix(text, only=None):
     """Rewrite physical gravity tokens in one XML file to start/end.
 
     `hardcoded_gravity` names a value `aqlab rtl` would rewrite, but `--fix`
@@ -2224,15 +2249,21 @@ def gravity_fix(text):
     The attribute *name* is matched first: a plain value sweep would also hit
     the `text="left"` label sitting in the same file. `textAlignment` is the
     one attribute whose RTL vocabulary is viewStart/viewEnd, not start/end.
+    `only` narrows the sweep to one attribute name, which is how the
+    `pinNested` fixer repairs a single row: a file-wide sweep would rewrite
+    sibling rows the check never named.
+
     Returns (new_text, hits). Pure; idempotent (start/end never re-match).
     """
     hits = [0]
 
     def one(m):
-        value = m.group(2)
+        value = m.group(3)
+        if only is not None and m.group(2) != only:
+            return m.group(0)
         if not GRAVITY_TOKEN_HIT.search(value):
             return m.group(0)
-        table = (TEXT_ALIGN_TOKEN if "textAlignment" in m.group(1)
+        table = (TEXT_ALIGN_TOKEN if m.group(2) == "textAlignment"
                  else GRAVITY_RTL)
         new = re.sub(GRAVITY_TOKEN, lambda t: table[t.group(1)], value)
         if new == value:
@@ -2240,7 +2271,7 @@ def gravity_fix(text):
         hits[0] += 1
         return '%s%s"' % (m.group(1), new)
 
-    hit_re = re.compile(r'((?:\b|:)(?:gravity|layout_gravity|foregroundGravity|textAlignment)\s*=\s*")([^"]*)"')
+    hit_re = re.compile(r'((?:\b|:)(gravity|layout_gravity|foregroundGravity|textAlignment)\s*=\s*")([^"]*)"')
     return hit_re.sub(one, text), hits[0]
 
 
@@ -2267,14 +2298,14 @@ def fix_pin_local(proj, dry=False):
     if not res.is_dir():
         return 0
     broken = {}
-    for kind, path, tag, val in direction_pins(proj):
+    for kind, path, tag, val, *_names in direction_pins(proj):
         if kind in ("layoutDirection", "textDirection") and val == "ltr":
             broken.setdefault(path, []).append(tag)
     n = 0
     for rel, wanted in sorted(broken.items()):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8")
+            txt = f.read_text(encoding="utf-8", newline="")
         except OSError:
             continue
         out, i, done = [], 0, 0
@@ -2296,7 +2327,7 @@ def fix_pin_local(proj, dry=False):
         if done:
             out.append(txt[i:])
             if not dry:
-                f.write_text("".join(out), encoding="utf-8")
+                f.write_text("".join(out), encoding="utf-8", newline="")
             n += done
     return n
 
@@ -2313,21 +2344,26 @@ def fix_pin_nested(proj, dry=False):
     attribute to `start`/`end` fixes the row and leaves the pin to do its job.
 
     So the fixer is `aqlab rtl` applied to the named row only, and the row's
-    reported physical attribute is the one that changes. Returns rows changed;
-    idempotent because `migrate_attr` returns `None` for a start/end name.
+    reported physical attribute is the one that changes. A `gravity` on the row
+    is the same defect with a different repair — the value, not the name — so
+    `gravity_fix` runs over the row with the finding's own attribute list, and
+    never over the file: the sibling rows were not reported and must not move.
+
+    Returns rows changed; idempotent because `migrate_attr` returns `None` for a
+    start/end name and the token table has no start/end left to rewrite.
     """
     res = Path(proj) / "res"
     if not res.is_dir():
         return 0
     broken = {}
-    for kind, path, tag, _val in direction_pins(proj):
+    for kind, path, tag, _val, names in direction_pins(proj):
         if kind == "pinNested":
-            broken.setdefault(path, []).append(tag)
+            broken.setdefault(path, []).append((tag, names))
     n = 0
     for rel, wanted in sorted(broken.items()):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8")
+            txt = f.read_text(encoding="utf-8", newline="")
         except OSError:
             continue
         # Two rows in one file are reported separately but can sit in the same
@@ -2343,8 +2379,13 @@ def fix_pin_nested(proj, dry=False):
             # `pinNested` and must not consume the next reported row's slot —
             # found by a `layoutDirection="locale"` row sitting between two real
             # ones and taking the first one's place.
-            if pos < 0 or tag != wanted[0] or ANY_DIR_RE.search(body):
+            if pos < 0 or tag != wanted[0][0] or ANY_DIR_RE.search(body):
                 continue
+            # `rewrite_xml_attrs` renames the physical attribute *and* rewrites
+            # a gravity value in the same pass (`migrate_attr`), which is why
+            # a nested row carrying both is repaired by one call. The names
+            # stay on the finding: the message says what will move, and the
+            # row is matched by them.
             fixed, hits = rewrite_xml_attrs("<x" + body + ">")
             if not hits:
                 continue
@@ -2355,7 +2396,7 @@ def fix_pin_nested(proj, dry=False):
         if done:
             out.append(txt[i:])
             if not dry:
-                f.write_text("".join(out), encoding="utf-8")
+                f.write_text("".join(out), encoding="utf-8", newline="")
             n += done
     return n
 
@@ -2371,13 +2412,13 @@ def fix_gravity(proj, dry=False):
     for rel in sorted(todo):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8")
+            txt = f.read_text(encoding="utf-8", newline="")
         except OSError:
             continue
         out, hits = gravity_fix(txt)
         if out != txt:
             if not dry:
-                f.write_text(out, encoding="utf-8")
+                f.write_text(out, encoding="utf-8", newline="")
             n += hits
     return n
 
@@ -2400,7 +2441,7 @@ def fix_symmetry(proj, dry=False):
     for rel, wanted in sorted(broken.items()):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8")
+            txt = f.read_text(encoding="utf-8", newline="")
         except OSError:
             continue
         # Count only elements this file was reported for, so a second run over an
@@ -2431,7 +2472,7 @@ def fix_symmetry(proj, dry=False):
             return whole[:head] + body + tail
         out = elem.sub(repl, txt)
         if out != txt and not dry:
-            f.write_text(out, encoding="utf-8")
+            f.write_text(out, encoding="utf-8", newline="")
         n += done
     return n
 

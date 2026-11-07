@@ -137,6 +137,102 @@ def test_lint_fix_pin_nested(tmp):
     check("pin fix idempotent", A.fix_pin_nested(root) == 0 and not pins())
 
 
+def test_pin_nested_gravity(tmp):
+    """A `gravity` under an inherited pin is repaired by the same fixer.
+
+    Round 11 taught the fixer to drop a *local* `layoutDirection="ltr"`, but the
+    inherited pin is deliberate, so its rows can only be repaired by migrating
+    what is underneath: `paddingLeft` is a rename, `gravity="left"` is a value.
+    Before this, `--fix` renamed the padding and left the gravity standing — the
+    requirement told the user the row was fixed while its own warning survived.
+
+    The attribute list has to travel with the finding: the neighbour row carries
+    a gravity too and was never named, so a file-wide sweep would move it.
+    """
+    root = Path(tmp) / "pingrav"
+    res = root / "res"
+    (res / "layout").mkdir(parents=True)
+    (res / "values").mkdir()
+    (res / "values-ar").mkdir()
+    for d in ("values", "values-ar"):
+        (res / d / "strings.xml").write_text(
+            HEAD + '<string name="a">x</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+    f = res / "layout" / "clock.xml"
+    f.write_text(
+        HEAD +
+        '<LinearLayout android:layoutDirection="ltr">\n'
+        '    <LinearLayout android:gravity="left" android:paddingLeft="4.0dip"/>\n'
+        '    <LinearLayout android:gravity="left" android:paddingLeft="6.0dip"/>\n'
+        '</LinearLayout>\n', encoding="utf-8")
+    pins = [g for g in A.direction_pins(root) if g[0] == "pinNested"]
+    check("gravity row is a nested pin", len(pins) == 2, str(pins))
+    check("finding names its attributes",
+          all("gravity" in g[4] and "paddingLeft" in g[4] for g in pins), str(pins))
+    check("one finding per row, not one per attribute", len(pins) == 2, str(pins))
+    # The fixer is exercised on its own first: `cmd_lint` also runs the
+    # file-wide gravity pass, and that pass would rewrite this row's gravity
+    # even if `fix_pin_nested` never learned the attribute — a mutation of
+    # exactly that line survived the run-level assertions.
+    alone = Path(tmp) / "pingrav-alone"
+    (alone / "res" / "layout").mkdir(parents=True)
+    af = alone / "res" / "layout" / "clock.xml"
+    af.write_text(
+        '<LinearLayout android:layoutDirection="ltr">'
+        '<LinearLayout android:gravity="left" android:paddingLeft="4.0dip"/>'
+        '</LinearLayout>', encoding="utf-8")
+    check("row fixer counts the gravity", A.fix_pin_nested(alone) == 1)
+    al = af.read_text(encoding="utf-8")
+    check("row fixer rewrites the gravity value", 'android:gravity="start"' in al, al)
+    # apktool writes CRLF and Python's text mode silently rewrites every one
+    # of them to LF on write-back, so a one-line fix touched every line of a
+    # 40-line layout. Measured while wiring this round: the diff was the whole
+    # file and the second `--fix` pass no longer recognised its own output.
+    crlf = Path(tmp) / "pingrav-crlf"
+    (crlf / "res" / "layout").mkdir(parents=True)
+    cf = crlf / "res" / "layout" / "clock.xml"
+    cf.write_bytes(
+        b'<LinearLayout android:layoutDirection="ltr">\r\n'
+        b'    <LinearLayout android:paddingLeft="4.0dip"/>\r\n'
+        b'</LinearLayout>\r\n')
+    A.fix_pin_nested(crlf)
+    raw = cf.read_bytes()
+    # Byte-exact on purpose: counting CRLF as a substring still matches the
+    # doubled line ending a text-mode write produces on this host, and the
+    # mutation of newline="" survived exactly that count.
+    check("row fixer keeps CRLF", raw.count(b"\r\n") == 3
+          and b"\r\r" not in raw, repr(raw))
+
+    args = argparse.Namespace(proj=str(root), locale="ar", quiet=True, verbose=False,
+                              fail_under=None, fail_under_file=None, fix=True,
+                              dry_run=True)
+    before = f.read_text(encoding="utf-8", newline="")
+    with contextlib.redirect_stdout(io.StringIO()):
+        A.cmd_lint(args)
+    check("nested dry run writes nothing", f.read_text(encoding="utf-8", newline="") == before, "")
+
+    args.dry_run = False
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        A.cmd_lint(args)
+    # `--fix` runs four passes; the symmetry pass sees the migrated
+    # `paddingStart` and pairs it, so the comparison baseline is the text
+    # this test asserts on, not the raw one-pass output.
+    after = f.read_text(encoding="utf-8", newline="")
+    check("nested row gravity migrated", 'android:gravity="start"' in after, after)
+    check("nested row padding renamed", 'android:paddingStart="4.0dip"' in after, after)
+    check("both rows fixed by one run", out.getvalue().count("fixed:") == 1,
+          out.getvalue()[:200])
+
+    with contextlib.redirect_stdout(io.StringIO()) as out2:
+        A.cmd_lint(args)
+    check("nested fix idempotent", f.read_text(encoding="utf-8", newline="") == after,
+          f.read_text(encoding="utf-8", newline=""))
+    check("nested second pass settles", "nested" not in out2.getvalue().lower(),
+          out2.getvalue()[:400])
+
+
 def test_lint_fix_pin_local(tmp):
     """`lint --fix` drops a `layoutDirection="ltr"` pin that sits on the row
     itself, and migrates that row's physical attributes with it.
@@ -208,8 +304,11 @@ def test_lint_fix_pin_local(tmp):
         A.cmd_lint(argparse.Namespace(proj=str(lone), locale="ar", json=False, fix=True,
                                       dry_run=False, fail_under=None, fail_under_file=None,
                                       verbose=False))
+    # Two, not one: dropping the pin feeds the row into the symmetry pass,
+    # which now runs after it and pairs the renamed `paddingStart`. Counted
+    # from the pin fixer alone this row was one; `--fix` reports the passes.
     check("lint --fix reaches the local pin fixer",
-          "fixed: 1 element(s)" in out_lone.getvalue(), out_lone.getvalue()[-300:])
+          "fixed: 2 element(s)" in out_lone.getvalue(), out_lone.getvalue()[-300:])
     check("lint --fix wrote the migrated row",
           'android:paddingStart="4.0dip"' in
           (lone / "res" / "layout" / "list.xml").read_text(encoding="utf-8"))
@@ -2081,6 +2180,7 @@ def main():
         test_lint_fix_gravity(tmp)
         test_lint_fix(tmp)
         test_lint_fix_pin_nested(tmp)
+        test_pin_nested_gravity(tmp)
         test_lint_fix_pin_local(tmp)
         test_direction_pins(tmp)
         test_rtl(proj)

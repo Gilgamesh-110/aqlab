@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`lint --fix` no longer rewrites every line ending in the file.** apktool
+  writes CRLF and Python text mode turns each one into LF on write-back, so a
+  one-attribute fix produced a whole-file diff and the next pass could no
+  longer recognise its own output. All four fixers now read and write with
+  `newline=""`. Also reordered: the pin fixers run before the symmetry pass,
+  which then pairs the freshly renamed `paddingStart` in the same run instead
+  of reporting an element whose `paddingLeft` no longer exists.
 - **`supportsRtl="false"` is read from the manifest, not from any text that
   looks like it.** The check now walks `<application>` tags and ignores
   `<!-- ... -->` blocks first, so an apktool dump whose comment quotes the
@@ -15,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `supportsRtl` findings — its manifest says `true`.
 
 ### Added
+- **`lint --fix` repairs a `gravity` on a row that only inherits a pinned
+  direction.** Round 10 taught the fixer to migrate such a row's
+  `paddingLeft`, but a `gravity="left"` sitting on the same row was left
+  standing — the warning the linter printed for it survived the fix that was
+  supposed to repair it. The finding now names every physical attribute it
+  saw, and the fixer rewrites the value as well as the name. Measured on the
+  real APK: unchanged at 41 warnings / 1 error, 0 `pinNested` findings, and
+  `--fix --dry-run` still plans the same 2 gravity rewrites.
 - **`lint --fix` drops a local `layoutDirection="ltr"` pin.** A pin on the row
   itself is the author turning RTL off for that row to keep its `paddingLeft`
   pointing one way; the fixer drops the pin so the row follows the locale and
