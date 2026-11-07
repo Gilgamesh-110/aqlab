@@ -2539,9 +2539,26 @@ def fix_pin_local(proj, dry=False):
     res = Path(proj) / "res"
     if not res.is_dir():
         return 0
+    # `rtl_enabled` names the same `ltr` literal on a row that carries no
+    # physical attributes, and nothing else repaired it: `lint --fix` promised
+    # to drop the pin and the pin survived every pass. The repair is identical
+    # (drop the literal), there is simply nothing to migrate, so the row joins
+    # the same queue.
+    #
+    # The queue is a list of tag names and the walk below pairs each entry with
+    # the next start tag of that name, so it has to be in document order. Two
+    # sources cannot guarantee that on their own — `direction_pins` names every
+    # row with physical attrs, `rtl_enabled` every row without, and a file whose
+    # first row belongs to the second list queues them backwards. Duplicates are
+    # harmless only because the sort below puts the real rows first and the
+    # surplus entries fall off the end, so the lists are concatenated and the
+    # walk is given the offsets to sort by.
     broken = {}
     for kind, path, tag, val, *_names in direction_pins(proj):
         if kind in ("layoutDirection", "textDirection") and val == "ltr":
+            broken.setdefault(path, []).append(tag)
+    for _attr, path, tag, _val in rtl_enabled(proj):
+        if _val == "ltr":
             broken.setdefault(path, []).append(tag)
     n = 0
     for rel, wanted in sorted(broken.items()):
@@ -2550,6 +2567,20 @@ def fix_pin_local(proj, dry=False):
             txt = f.read_text(encoding="utf-8", newline="")
         except OSError:
             continue
+        # Two sources queue tags now, so the queue is not automatically in
+        # document order — and the walk below matches `wanted[0]` against tags as
+        # it meets them, which silently mis-pairs on a file holding `<A/><B/>`
+        # reported in the other order. Index the file once and sort by offset.
+        slots = {}
+        for tag, body, _depth, _sc, pos in walk_layout(txt, full=True):
+            if pos >= 0 and LOCAL_PIN_RE.search(body):
+                slots.setdefault(tag, []).append(pos)
+        ordered = []
+        for tag, pos in sorted(((t, p) for t in set(wanted)
+                                for p in slots.get(t, [])[:wanted.count(t)]),
+                               key=lambda tp: tp[1]):
+            ordered.append(tag)
+        wanted = ordered
         out, i, done = [], 0, 0
         # The offset comes from the walk: a start tag repeats its neighbour's
         # text often enough (`android:orientation="horizontal"` opens half of

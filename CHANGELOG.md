@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`RtlEnabled`: a direction literal that beats the locale on a row with no physical attributes.** `direction_pins` names a pin only when it sits over `left`/`right` attributes; the same literal on a row carrying none also wins over `supportsRtl` — nothing reported it, so an Arabic screen kept that row in the direction it was authored in. Non-defects are skipped before anything is measured, and each one is a measured case, not a guess: `locale` (the default spelled out), `firstStrong`/`anyRtl`/`inherit`, an `rtl` pin on a leaf (a mirrored glyph), a value the project declares in its own `values/attrs.xml` (aapt2 refuses a duplicate platform constant, so stripping it breaks the compile), a dotted custom class (may read its own styleable), and an element whose whole content is `<include>`s of an order-driven row — measured on the real APK, its only two `ltr` pins are Material's `material_clock_display` and `material_timepicker_textinput_display`, a clock face and a time picker, which are that shape in every locale. Measured on the real APK before wiring it in: 0 new warnings, 41 warnings / 1 error unchanged. Tests 371 → 381; mutation-killed eight ways (widget test off, tag-itself test off, flat subtree, `rtl`-leaf rule, custom-class rule, declared-enum rule, harmless-set rule, `rtl`-text rule). → **[[Unreleased]]** — no version bump.
 ### Fixed
+- **`lint --fix` promised to drop an `RtlEnabled` pin and never dropped it.**
+  `rtl_enabled` names a direction literal on a row that carries no physical
+  attributes, and its warning has always read "`aqlab lint --fix` drops the
+  pin". The only fixer was `fix_pin_local`, which read `direction_pins` — a
+  list that by definition never contains such a row — so the pin survived
+  every pass and the warning repeated forever. Probed on a two-line fixture:
+  `fixed: 0`, warning unchanged, second run identical. The repair is the same
+  one (remove the literal; there is nothing physical to migrate), so both
+  sources now feed one queue.
+
+  Joining the two lists broke the order they relied on: `direction_pins` names
+  every row *with* physical attrs and `rtl_enabled` every row *without*, so a
+  file whose first row belongs to the second list was queued backwards, and
+  the walk — which pairs each queue entry with the next start tag of that name
+  — edited the wrong row and left the reported one pinned. The queue is sorted
+  by the offsets the file walk already produces.
+
+  Measured on the real APK: `rtl_enabled` names 0 rows there (its four
+  `layoutDirection="locale"` are the correct spelling and its two `ltr` pins
+  are include-only clock/timepicker wrappers), so `--fix --dry-run` still plans
+  the same 2 gravity rewrites and the report stays 41 warnings / 1 error.
+  Tests 381 → 399; mutation-killed four ways (both sources off, one source off,
+  unsorted queue, no dedupe of the row both checks name).
 - **`fix_pin_local` dropped one direction pin per row, and reached only the cheap spelling.** `direction_pins` reports the first pin it finds on a row and `break`s, so `layoutDirection="ltr"` shadowed a `textDirection="ltr"` beside it; the fixer removed the first, the second survived, the row stayed reported and the next `--fix` edited the same file again — contradicting its own idempotence. Two more mismatches between the reporter's pattern and the fixer's, both found by probing: the reporter accepts `app:` and either quote char, the fixer accepted neither, so an `app:layoutDirection` row came back as `<... app: android:orientation=...>` — a dangling prefix, broken XML — and a single-quoted row was reported but unreachable. `LOCAL_PIN_RE` now matches both attribute names, both prefixes and both quote characters. Also: the `textDirection` warning never said `--fix` would repair an `ltr` pin it already repaired; it carries the tip now. Tests 360 → 371; mutation-killed four ways (both-pins, text-name, `app:` prefix, quote char).
 - **`hardcoded_gravity` and both `lint --fix` writers read only double quotes.**
   Android accepts either quote character on an attribute value, and round 14

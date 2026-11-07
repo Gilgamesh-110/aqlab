@@ -1686,6 +1686,7 @@ def test_lint_fix(tmp):
 
 
 XML_HEAD = '<?xml version="1.0" encoding="utf-8"?>' + chr(10)
+NL = chr(10)
 HEAD = '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
 
 
@@ -1852,6 +1853,93 @@ def test_pin_drop_removes_every_pin(tmp):
     check("single-quoted pin gone", "Direction=" not in f.read_text(encoding="utf-8"),
           f.read_text(encoding="utf-8"))
 
+
+def test_lint_fix_rtl_enabled_pin(tmp):
+    """`lint --fix` must drop a `ltr` literal that `rtl_enabled` reported.
+
+    `rtl_enabled` names a direction literal on a row that carries no physical
+    attributes. The warning always promised `--fix` would drop it, but the only
+    fixer was `fix_pin_local` reading `direction_pins`, which never names such
+    a row: the pin survived every pass and the promise was a lie. The repair is
+    the same one — drop the literal, migrate nothing, because there is nothing
+    physical to migrate.
+
+    The queue now has two sources, so it is no longer in document order by
+    construction: a `--fix` that pairs a `<B/>` finding with the first `<A/>`
+    in the file edits the wrong row and leaves the reported one pinned.
+    """
+    root = Path(tmp) / "enabledfix"
+    res = root / "res" / "layout"
+    res.mkdir(parents=True)
+    ns = '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"'
+
+    # No physical attrs anywhere: only `rtl_enabled` sees this row.
+    f = res / "a.xml"
+    f.write_text(ns + ' android:orientation="horizontal"'
+                 ' android:layoutDirection="ltr">'
+                 '<TextView android:textDirection="ltr" android:text="a"/>'
+                 '</LinearLayout>', encoding="utf-8")
+    check("a row with no physical attrs is an rtl_enabled finding",
+          len(A.rtl_enabled(root)) == 2, str(A.rtl_enabled(root)))
+    check("direction_pins does not name it", A.direction_pins(root) == [],
+          str(A.direction_pins(root)))
+    check("fixer drops it anyway", A.fix_pin_local(root) == 2, "")
+    after = f.read_text(encoding="utf-8")
+    check("no pin left behind", "Direction=" not in after, after)
+    check("rtl_enabled fix is idempotent",
+          A.fix_pin_local(root) == 0 and A.rtl_enabled(root) == [],
+          str(A.rtl_enabled(root)))
+
+    # Two rows, two tags: the fixer edits each once and keeps both values.
+    f.write_text(ns + '>' + NL +
+                 '<TextView android:layoutDirection="ltr" android:text="x"/>' + NL +
+                 '<Button android:layoutDirection="ltr" android:text="y"/>' + NL +
+                 '</LinearLayout>', encoding="utf-8")
+    check("both same-file rows are findings", len(A.rtl_enabled(root)) == 2,
+          str(A.rtl_enabled(root)))
+    check("both fixed in one pass", A.fix_pin_local(root) == 2, "")
+    after = f.read_text(encoding="utf-8")
+    check("both rows freed", after.count("Direction=") == 0, after)
+    check("the text of both rows survived the edit",
+          'android:text="x"' in after and 'android:text="y"' in after, after)
+
+    # Source order is lost: `direction_pins` and `rtl_enabled` are two lists, so
+    # the queue was built source-first rather than in document order. Here the
+    # first row on disk is a `rtl_enabled` one and the second is a `direction_pins`
+    # one, and the two loops name them in the opposite order: an unsorted queue
+    # pairs the second entry with the first `<ImageView>` row and edits the wrong
+    # start tag.
+    f.write_text(ns + '>' + NL +
+                 '<TextView android:layoutDirection="ltr" android:text="x"/>' + NL +
+                 '<LinearLayout android:paddingLeft="4dp" android:layoutDirection="ltr">'
+                 '<ImageView/></LinearLayout>' + NL +
+                 '</LinearLayout>', encoding="utf-8")
+    check("one row from each source",
+          len(A.direction_pins(root)) == 1 and len(A.rtl_enabled(root)) == 1,
+          f"{A.direction_pins(root)} / {A.rtl_enabled(root)}")
+    check("both sources fixed in one pass", A.fix_pin_local(root) == 2, "")
+    after = f.read_text(encoding="utf-8")
+    check("the physical row was migrated, not just unpinned",
+          'android:paddingStart="4dp"' in after, after)
+    check("the text row kept its text", 'android:text="x"' in after, after)
+
+    # A row both checks name - an `ltr` pin and physical attrs, with a text
+    # widget beneath so `rtl_enabled` sees it too - is still one start tag.
+    # Summing the two counts queues it twice and the walk then spends the second
+    # entry on the next row, editing a row nothing reported.
+    f.write_text(ns + '>' + NL +
+                 '<LinearLayout android:paddingLeft="4dp" android:layoutDirection="ltr">'
+                 '<TextView android:text="t"/></LinearLayout>' + NL +
+                 '<Button android:layoutDirection="ltr" android:text="b"/>' + NL +
+                 '</LinearLayout>', encoding="utf-8")
+    check("the same row is named by both checks",
+          len(A.direction_pins(root)) == 1 and len(A.rtl_enabled(root)) == 2,
+          f"{A.direction_pins(root)} / {A.rtl_enabled(root)}")
+    check("the row named twice is still one edit", A.fix_pin_local(root) == 2, "")
+    after = f.read_text(encoding="utf-8")
+    check("both rows are free of pins", "Direction=" not in after, after)
+    check("the physical row was migrated", 'android:paddingStart="4dp"' in after, after)
+    check("mixed-source fix is idempotent", A.fix_pin_local(root) == 0, "")
 
 def test_direction_pins(tmp):
     """DirectionPins: a pin over physical attrs keeps a row LTR in Arabic.
@@ -2679,6 +2767,7 @@ def main():
         test_pin_drop_removes_every_pin(tmp)
         test_direction_pins(tmp)
         test_rtl_enabled(tmp)
+        test_lint_fix_rtl_enabled_pin(tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)
