@@ -22,6 +22,9 @@ Exit code is non-zero when `lint` finds errors, so it drops straight into CI.
 from __future__ import annotations
 
 import argparse
+import collections
+import contextlib
+import io
 import json
 import os
 import re
@@ -3013,23 +3016,73 @@ def cmd_build(args):
 
 
 def cmd_all(args):
-    proj = Path(args.apk).stem + "-decoded"
-    cmd_decode(argparse.Namespace(apk=args.apk, out=proj, framework=args.framework,
-                                  quiet=args.quiet,
-                                  with_sources=getattr(args, "with_sources", False)))
-    cmd_rtl(argparse.Namespace(proj=proj, dry_run=False, quiet=args.quiet,
-                               force_min_sdk=getattr(args, "force_min_sdk", False)))
+    """One shot: decode -> rtl -> apply -> lint -> build, with a summary block.
+
+    Each stage's output is held back and shown only if that stage fails; a quiet
+    default is the point of the command. Lint errors do not abort — an APK whose
+    strings are still untranslated still builds, and the summary has to say
+    both — but a failed decode/migrate/build raises straight through `run()`.
+    """
+    if not args.out:
+        raise Fail("aqlab all needs -o/--out <output.apk> — the summary names the artifact")
+    proj, out = Path(args.apk).stem + "-decoded", args.out
+
+    def stage(label, fn):
+        """Run one stage, hold its output, and keep every line for the summary.
+
+        A stage that raises is reported with its own last lines, because the
+        tool it wrapped is what explained the failure.
+        """
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                rc = fn()
+        except Fail as e:
+            print(f"[FAIL] {label}: {e}", file=sys.stderr)
+            for line in [l for l in buf.getvalue().splitlines() if l.strip()][-4:]:
+                print("  " + line, file=sys.stderr)
+            raise
+        text = buf.getvalue()
+        print(f"  [{'OK' if not rc else 'WARN'}] {label}")
+        return rc, text
+
+    stage("decode", lambda: cmd_decode(argparse.Namespace(
+        apk=args.apk, out=proj, framework=args.framework, quiet=args.quiet,
+        with_sources=getattr(args, "with_sources", False))))
+    _, rtl_out = stage("rtl", lambda: cmd_rtl(argparse.Namespace(
+        proj=proj, dry_run=False, quiet=args.quiet,
+        force_min_sdk=getattr(args, "force_min_sdk", False))))
     if args.tsv:
-        cmd_apply(argparse.Namespace(proj=proj, tsv=args.tsv, locale=args.locale))
-    rc = cmd_lint(argparse.Namespace(proj=proj, locale=args.locale, verbose=args.verbose))
-    cmd_build(argparse.Namespace(proj=proj, out=args.out, ks=args.ks,
-                                 ks_pass=args.ks_pass, ks_alias=args.ks_alias, quiet=args.quiet))
+        stage("apply", lambda: cmd_apply(argparse.Namespace(
+            proj=proj, tsv=args.tsv, locale=args.locale)))
+    rc, lint_out = stage("lint", lambda: cmd_lint(argparse.Namespace(
+        proj=proj, locale=args.locale, verbose=args.verbose)))
+    _, build_out = stage("build", lambda: cmd_build(argparse.Namespace(
+        proj=proj, out=out, ks=args.ks, ks_pass=args.ks_pass,
+        ks_alias=args.ks_alias, quiet=args.quiet)))
+
+    migrated = re.search(r"\[(?:DONE|DRY)\] (\d+) file", rtl_out)
+    counts = re.search(r"\[(?:OK|FAIL)\] (\d+) error\(s\), (\d+) warning\(s\)", lint_out)
+    per_rule = collections.Counter(
+        m.group(1) for m in re.finditer(r"^\s*(?:warn|error)\s+\[(\w+)\]", lint_out, re.M))
+    # print the artifact `build` actually produced: apksigner fits the signature
+    # onto the aligned copy, so the input APK stays unsigned. Trust its own line.
+    built = re.search(r"built|signed -> (.+?)\s*(?:\(|$)", build_out, re.M)
+    print("[DONE] aqlab all")
+    print(f"  changes : {migrated.group(1) if migrated else '0'} file(s) migrated")
+    print("  lint    : " + (f"{counts.group(1)} error(s), {counts.group(2)} warning(s)"
+                            if counts else "not run")
+          + "".join(f" {n}={c}" for n, c in sorted(per_rule.items())))
+    print(f"  output  : {built.group(1) if built else out}")
+    print(f"  project : {proj}")
     return rc
 
 
 # --------------------------------------------------------------------------
 # CLI
-# --------------------------------------------------------------------------
+
+
+
 
 
 def build_parser():

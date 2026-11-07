@@ -2748,6 +2748,91 @@ def test_decode_sources_flag():
     check("--with-sources keeps smali", "-s" not in seen[1])
 
 
+def test_all_pipeline_summary():
+    """`aqlab all` runs every stage, hides their chatter, and prints one block.
+
+    Wired hermetically: every stage is replaced, so this checks the wiring —
+    which stage runs, in what order, what aborts, and what the summary says —
+    not apktool. The analyser bug it guards is bookkeeping: the summary used to
+    name the APK we passed to `build` rather than the one `build` wrote, and an
+    unsigned run's `out.apk` is not a signable artifact while the aligned copy is.
+    """
+    calls, err = [], io.StringIO()
+
+    def rec(name, out=""):
+        def fn(a):
+            calls.append((name, getattr(a, "proj", None), getattr(a, "out", None)))
+            if out:
+                print(out)
+            return 0
+        return fn
+
+    orig = (A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build)
+    A.cmd_decode = rec("decode")
+    A.cmd_rtl = rec("rtl", "[DONE] 7 file(s) updated")
+    A.cmd_lint = rec("lint", "  warn  [RtlSymmetry] a.xml: paddingLeft\n"
+                             "  warn  [RtlRtl] b.xml: x\n"
+                             "  warn  [RtlSymmetry] c.xml: paddingRight\n"
+                             "[OK] 0 error(s), 3 warning(s)")
+    A.cmd_build = rec("build", "[DONE] signed -> demo-ar-aligned.apk")
+    try:
+        ns = argparse.Namespace(apk="demo.apk", out="demo-ar.apk", tsv=None, locale="ar",
+                                verbose=False, quiet=True, ks=None, ks_pass="",
+                                ks_alias=None, framework=None, force_min_sdk=False,
+                                with_sources=False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = A.cmd_all(ns)
+        out = buf.getvalue()
+    finally:
+        A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build = orig
+
+    # `all` is not a verb — error out — and 7 files migrated must reach the summary
+    check("all: every stage runs, in order",
+          [c[0] for c in calls] == ["decode", "rtl", "lint", "build"])
+    # `decode` receives the project dir as `out` and no `proj`; `build` takes both
+    check("all: the project dir is derived from the APK stem",
+          [c[1] for c in calls[1:]] == ["demo-decoded"] * 3
+          and calls[0][2] == "demo-decoded"
+          and calls[3][2] == "demo-ar.apk")
+    check("all: per-rule counts are aggregated and sorted",
+          "RtlRtl=1 RtlSymmetry=2" in out)
+    check("all: the migrated count comes from rtl's own line",
+          "changes : 7" in out)
+    check("all: the reported output is the file build wrote, not the one it read",
+          "output  : demo-ar-aligned.apk" in out)
+    check("all: a stage's chatter does not leak into the summary",
+          "paddingLeft" not in out and out.count("[OK]") == 4)
+
+    # no -o means the summary would name a file that does not exist
+    try:
+        A.cmd_all(argparse.Namespace(apk="demo.apk", out=None, tsv=None, locale="ar",
+                                     verbose=False, quiet=True, ks=None, ks_pass="",
+                                     ks_alias=None, framework=None, force_min_sdk=False,
+                                     with_sources=False))
+        raised = False
+    except A.Fail:
+        raised = True
+    check("all: refuses to run without an output path", raised)
+
+    # a failing stage aborts the pipeline and keeps that stage's own words
+    A.cmd_decode = lambda a: (_ for _ in ()).throw(A.Fail("apktool failed (1): boom"))
+    try:
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            try:
+                A.cmd_all(argparse.Namespace(apk="demo.apk", out="x.apk", tsv=None,
+                                             locale="ar", verbose=False, quiet=True,
+                                             ks=None, ks_pass="", ks_alias=None,
+                                             framework=None, force_min_sdk=False,
+                                             with_sources=False))
+                aborted = False
+            except A.Fail as e:
+                aborted = "boom" in str(e)
+    finally:
+        A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build = orig
+    check("all: a failed stage aborts the pipeline", aborted)
+
+
 def test_plural_structure(tmp):
     """An Arabic <plurals> that mirrors the English quantities must be reported.
 
@@ -3084,6 +3169,7 @@ def main():
         test_min_sdk_guard(tmp)
         test_bad_path_guard(tmp)
         test_migrate_prefilter()
+        test_all_pipeline_summary()
         test_decode_sources_flag()
         test_plural_structure(tmp)
         test_plural_file_roundtrip(tmp)

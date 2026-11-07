@@ -157,11 +157,28 @@ aqlab lint   work                   # exits non-zero on real errors
 aqlab build  work --ks release.keystore --ks-alias release
 ```
 
-Or all of it at once:
+Or all of it at once — decode, migrate, import the table, lint, rebuild and sign,
+one summary block, and the run stops at the first stage that fails:
 
 ```sh
-aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
+aqlab all app.apk -o app-ar.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 ```
+
+```
+  [OK] decode
+  [OK] rtl
+  [OK] apply
+  [OK] lint
+  [OK] build
+[DONE] aqlab all
+  changes : 29 file(s) migrated
+  lint    : 0 error(s), 70 warning(s) RtlSymmetry=37 RtlHardcoded=2
+  output  : app-ar-aligned.apk
+  project : app-decoded
+```
+
+Lint errors do not stop the build — an APK whose strings are not translated yet
+still assembles — but the summary counts them and `all` exits non-zero.
 
 ## Commands
 
@@ -176,7 +193,7 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `diff <a.apk> <b.apk>` | added / removed / changed strings between two APKs, read straight from the resource table. Non-zero exit when they differ. |
 | `xliff <dir>` | wrap every format specifier in `<xliff:g>` so a translator cannot reorder or drop it. `--dry-run` to preview. |
-| `all <apk>` | the whole pipeline |
+| `all <apk> -o out.apk` | the whole pipeline: decode, migrate, `--tsv` import, lint, rebuild, sign. One summary block; aborts at the first stage that fails, lint errors are counted but do not abort. |
 
 ### Speed, and why `decode` skips `smali/`
 
