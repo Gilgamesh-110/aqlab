@@ -3121,6 +3121,146 @@ def test_symmetry_partial_modern_is_not_coverage(tmp):
                                           ("paddingStart", "paddingEnd")], str(got))
 
 
+
+def test_translate_tm_glossary_and_hook(tmp):
+    """`translate` fills values-ar from the TM, then the glossary, then the hook.
+
+    The three sources are tried in that order and nothing is guessed. A TM
+    candidate carrying a different format signature is not a match at all: `%d`
+    written where the source has `%1$s` is a runtime crash, and the memory is
+    where such a fragment arrives from another project. A plural category the
+    source cannot supply stays absent rather than being filled with English.
+    """
+    work = Path(tmp) / "tr"
+    res = work / "res"
+    res.mkdir(parents=True)
+    (res / "values").mkdir()
+    (res / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<string name="app_name">Chess Assistant</string>'
+        '<string name="hello">Hello %1$s</string>'
+        '<string name="bye">Goodbye %1$s</string>'
+        '<string name="leader">Leader: %1$s</string>'
+        '<string name="boss">Hero %1$s!</string>'
+        '<string name="counter">Count %1$d/%2$d</string>'
+        '<string name="home_key">Chess home</string>'
+        '<string name="fuzzy_one">Delete the move</string>'
+        '<string name="twice">Done %1$s, again %1$s</string>'
+        '<string name="twice_f">Load %1$2.1f</string>'
+        '<string name="wide">%1$d of %2$d</string>'
+        '</resources>', encoding="utf-8")
+    (res / "values" / "plurals.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<plurals name="files"><item quantity="one">%d file</item>'
+        '<item quantity="other">%d files</item></plurals></resources>', encoding="utf-8")
+    tm = Path(tmp) / "tm.json"
+    tm.write_text(json.dumps({
+        "Chess Assistant": "مساعد الشطرنج",
+        "Chess home": "Chess home",
+        "Delete the moves": "احذف الحركات",
+        "%1$d of %2$d": "العدد %2$d من %1$d",
+        "Done %1$s, again %2$s": "تم %2$s ثم %1$s",
+        # the same shape with a count in Arabic and a type change in the source
+        # position: `%d` where the string has `%s` would make String.format throw
+        # same index and repeat count, different conversion: `%d` where the source
+        # has a float conversion throws at runtime, so it is not this string
+        "Load %1$d": "تحميل %1$d",
+        "Hello %1$s": "مرحباً %1$s",
+        "Goodbye %1$s": "وداعاً %1$s",           # exact, but the glossary will edit it
+        "Leader: %d": "القائد: %d",              # wrong signature for "Leader: %1$s"
+        "Leader: %1$s": "القائد %1$s",           # same signature: must be the one used
+        "Hero %1$s!": "بطل %1$s!",                # exact; hook would answer differently
+        "Count %1$d/%2$d": "العدد %2$d/%1$d",     # same argument set: legal
+    }, ensure_ascii=False), encoding="utf-8")
+    gl = Path(tmp) / "gl.json"
+    gl.write_text(json.dumps({"Chess": "الشطرنج"}, ensure_ascii=False), encoding="utf-8")
+    hook = Path(tmp) / "hook.py"
+    hook.write_text(
+        "import json, sys\n"
+        "items = json.load(sys.stdin)\n"
+        "print(json.dumps({i['key']: 'هوك ' + i['source'] for i in items}))\n",
+        encoding="utf-8")
+    q = lambda *c: " ".join('"' + x + '"' if " " in x else x for x in c)
+    out_json = Path(tmp) / "unmatched.json"
+
+    rc = A.cmd_translate(argparse.Namespace(
+        proj=str(work), tm=str(tm), glossary=str(gl), locale="ar",
+        translator=f"cmd:{q(sys.executable, str(hook))}", threshold=0.85, force=True,
+        unmatched_out=str(out_json), dry_run=False, quiet=True))
+    check("translate rc", rc == 0)
+    got = {e.key: e.text for e in A.read_entries(res / "values-ar" / "strings.xml")}
+    check("exact match", got.get("app_name") == "مساعد الشطرنج", str(got.get("app_name")))
+    # exact TM text for boss carries a Latin "Chess"; the glossary must rewrite
+    # it inside the Arabic sentence and leave a translation that never had the
+    # term alone
+    check("exact TM row beats the hook",
+          got.get("boss") == "بطل %1$s!", str(got.get("boss")))
+    check("fuzzy match above the threshold",
+          got.get("fuzzy_one") == "احذف الحركات", str(got.get("fuzzy_one")))
+    check("glossary rewrote the term inside an Arabic sentence",
+          got.get("home_key") == "الشطرنج home", str(got.get("home_key")))
+    # `goodbye` is a Turkish word this glossary must not touch (a case-insensitive
+    # search is not a substring search)
+    check("glossary did not touch a translation without the term",
+          got.get("hello") == "مرحباً %1$s", str(got.get("hello")))
+    # both rows read "Leader: <arg>" and only the signature tells them apart: with
+    # the check dropped, the first row wins and Arabic gets `%d` for a `%1$s`
+    check("a TM row whose signature differs is not the match",
+          got.get("leader") == "القائد %1$s", str(got.get("leader")))
+    # a TM row for the same shape but `%d` where the source has `%s` is not a
+    # match even though the argument set is identical: Android formats `%d` with
+    # a String argument by throwing
+    check("a specifier type change is not a match",
+          got.get("twice") == "هوك Done %1$s, again %1$s", str(got.get("twice")))
+    # same argument index and same conversion count, different conversion: `%d`
+    # where the source has a float conversion throws at runtime
+    check("a conversion change is not a match",
+          got.get("twice_f") == "هوك Load %1$2.1f", str(got.get("twice_f")))
+    check("permuted positional arguments are still a match",
+          got.get("wide") == "العدد %2$d من %1$d"
+          and got.get("counter") == "العدد %2$d/%1$d", str(got.get("wide")))
+
+    check("positional arguments compare as a set",
+          got.get("counter") == "العدد %2$d/%1$d", str(got.get("counter")))
+    # the source cannot declare a category, so it has no text: the writer emits
+    # an empty <item> to keep every Arabic category present, and that empty item
+    # is a gap to fill, not a translation
+    pl = {e.key: e.text for e in A.read_entries(res / "values-ar" / "plurals.xml")}
+    check("source-insupplyable plural categories are not filled with English",
+          not pl.get("files|few", "").strip() and not pl.get("files|many", "").strip(),
+          str({k: v for k, v in pl.items() if "|" in k}))
+    un = json.loads(out_json.read_text(encoding="utf-8"))
+    check("unmatched keys are listed", "files|few" in un and "app_name" not in un, str(un))
+
+
+def test_translate_refuses_a_bad_hook(tmp):
+    """A translator hook that cannot answer must stop the run, not write nothing."""
+    work = Path(tmp) / "trbad"
+    res = work / "res" / "values"
+    res.mkdir(parents=True)
+    (res / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
+        '<string name="a">Hello</string></resources>', encoding="utf-8")
+    tm = Path(tmp) / "empty.json"
+    tm.write_text("{}", encoding="utf-8")
+    try:
+        A.cmd_translate(argparse.Namespace(
+            proj=str(work), tm=str(tm), glossary=None, locale="ar", translator=None,
+            threshold=0.85, force=True, unmatched_out=None, dry_run=False, quiet=True))
+    except A.Fail:
+        pass
+    else:
+        check("empty TM is a failure", False, "cmd_translate accepted a TM with no pairs")
+    try:
+        bad = Path(tmp) / "bad.py"
+        bad.write_text("print(1)")
+
+        A.translator_cmd(f"cmd:{sys.executable} {bad}", [("a", "Hello")])
+    except A.Fail:
+        pass
+    else:
+        check("non-JSON hook output is a failure", False)
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         proj = fixture(tmp)
@@ -3140,6 +3280,8 @@ def main():
         test_rtl_locales_beyond_arabic(tmp)
         test_diff_between_apks(tmp)
         test_xliff_wrapping(tmp)
+        test_translate_tm_glossary_and_hook(tmp)
+        test_translate_refuses_a_bad_hook(tmp)
         test_symmetry_check(tmp)
         test_single_quoted_attributes(tmp)
         test_single_quoted_gravity_and_fix(tmp)

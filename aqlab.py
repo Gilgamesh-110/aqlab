@@ -24,10 +24,12 @@ from __future__ import annotations
 import argparse
 import collections
 import contextlib
+import difflib
 import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1261,6 +1263,294 @@ def cmd_apply(args):
             print(f"         {p.relative_to(args.proj).as_posix()}")
     return 0
 
+
+def load_tm(path):
+    """`{"en": "ar"}` or `[{"source":..., "target":...}]` -> list of pairs.
+
+    Two shapes, because the tables people already keep come in both: a JSON
+    object keyed by the source string, and the array Gettext and Android Studio
+    export use. Order is kept - an exact match is unambiguous, but a fuzzy one
+    scores every candidate, and a stable order makes the report reproducible.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        return [(str(k), str(v)) for k, v in data.items()
+                if str(k).strip() and str(v).strip()]
+    out = []
+    for row in data if isinstance(data, list) else []:
+        if not isinstance(row, dict):
+            continue
+        src = row.get("source", row.get("src", row.get("en", row.get("msgid"))))
+        dst = row.get("target", row.get("dst", row.get("ar", row.get("msgstr"))))
+        if src and dst and str(src).strip() and str(dst).strip():
+            out.append((str(src), str(dst)))
+    return out
+
+
+def load_glossary(path):
+    """`{"term": "..."}` or `[["term", "..."]]` -> dict, lowercased keys.
+
+    The glossary rewrites terms *inside* a matched sentence; it is never a match
+    source, so a row cannot resolve a whole string to a bare term it contains.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        return {str(a).strip().lower(): str(b).strip() for a, b in data
+                if str(a).strip() and str(b).strip()}
+    return {str(k).strip().lower(): str(v).strip() for k, v in data.items()
+            if str(k).strip() and str(v).strip()}
+
+
+def _fmt_sig(text):
+    """Comparable format signature: the argument set when fully positional,
+    the exact specifier list otherwise (same rule as `lint`).
+
+    Translation memory is the one place a fragment arrives from another project
+    carrying `%d` where this string needs `%1$s` - that is a crash at runtime,
+    so a candidate with a different signature is never a match.
+    """
+    fmts = _formats(text)
+    sect = _sections(fmts)
+    if sect is None:
+        return ("list", tuple(fmts))
+    # Positional arguments compare as a set (a translator may reorder them, see
+    # `_sections`), but the *type* of each argument is not free: `%1$d` where the
+    # source has `%1$s` reaches String.format with the wrong object and throws.
+    # So the set is compared per index with its conversion character kept.
+    kind = {}
+    for f in fmts:
+        m = RE_SECTION.match(f)
+        if m:
+            kind.setdefault(int(m.group(1)), f[-1])
+    return ("set", tuple(sorted(kind.items())))
+
+
+def tm_lookup(source, pairs, threshold=0.85):
+    """Exact first, then the closest fuzzy pair at or above `threshold`.
+
+    Fuzzy is `difflib.SequenceMatcher` on normalised text - stdlib, and good
+    enough for the near-duplicate strings an app is full of. Returns
+    `(translation, kind, score)` or None.
+    """
+    want = re.sub(r"\s+", " ", (source or "").strip().lower())
+    if not want:
+        return None
+    sig = _fmt_sig(source)
+    for src, dst in pairs:
+        if re.sub(r"\s+", " ", src.strip().lower()) == want and _fmt_sig(src) == sig:
+            return dst, "exact", 1.0
+    best, score = None, 0.0
+    for src, dst in pairs:
+        if _fmt_sig(src) != sig:
+            continue
+        got = difflib.SequenceMatcher(None, want,
+                                      re.sub(r"\s+", " ", src.strip().lower())).ratio()
+        if got > score:
+            best, score = dst, got
+    if best is not None and score >= threshold:
+        return best, "fuzzy", round(score, 3)
+    return None
+
+
+def function_words(text):
+    """True when the string carries something a translator must actually write.
+
+    Format-only and punctuation-only values (`%1$s`, `%1$d/%2$d`, `:`, `999+`)
+    cannot be translated and must not count as gaps: counting them inflates the
+    report and hides the real ones.
+    """
+    bare = re.sub(r"<[^>]*>", "", RE_FORMAT.sub("", text or ""))
+    return bool(RE_ARABIC.search(bare) or RE_LATIN.search(bare))
+
+
+def apply_glossary(text, glossary):
+    """Replace glossary terms in a translated sentence, case-insensitively.
+
+    Longest term first, so "Chess Assistant" is not eaten by "Chess". Only text
+    that already holds the term is touched: a translation that chose another
+    word stays as the translator wrote it.
+    """
+    if not glossary:
+        return text, 0
+    hits = 0
+    for term in sorted(glossary, key=len, reverse=True):
+        pat = re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)", re.IGNORECASE)
+        if not pat.search(text or ""):
+            continue
+        new = pat.sub(glossary[term], text)
+        if new != text:
+            hits += 1
+            text = new
+    return text, hits
+
+
+def split_argv(body):
+    """Split a `--translator` command line into argv, Windows paths included.
+
+    shlex.split in posix mode eats every backslash, so a Windows path to
+    python.exe arrives with its separators gone. Only the quoting is wanted
+    here, not the POSIX escaping, so backslashes are doubled before the split.
+    """
+    if os.name != "nt":
+        return shlex.split(body)
+    return shlex.split(body.replace("\\", "\\\\"))
+
+
+def translator_cmd(spec, items):
+    """`--translator cmd:<argv>` - JSON on stdin, JSON on stdout, nothing else.
+
+    The hook is what keeps this command offline: aqlab never calls a translation
+    service, it offers the strings to whatever the user wired up. Accepted
+    stdout: `{"key": "text"}` or `[{"key": ..., "text": ...}]`. A hook that
+    fails, or answers something unparsable, raises - an empty answer written
+    silently would look like a finished locale.
+    """
+    body = spec.split(":", 1)[1] if spec.lower().startswith("cmd:") else spec
+    argv = split_argv(body)
+    if not argv:
+        raise Fail("--translator cmd: needs a command")
+    payload = json.dumps([{"key": k, "source": s} for k, s in items], ensure_ascii=False)
+    try:
+        p = subprocess.run(argv, input=payload, capture_output=True, text=True)
+    except OSError as e:
+        raise Fail(f"--translator command not runnable: {e}")
+    if p.returncode != 0:
+        tail = (p.stderr or p.stdout or "").strip().splitlines()
+        raise Fail(f"--translator exited {p.returncode}: " + " | ".join(tail[-3:]))
+    try:
+        data = json.loads(p.stdout or "null")
+    except ValueError:
+        raise Fail("--translator stdout is not JSON")
+    if not isinstance(data, (dict, list)):
+        raise Fail("--translator stdout is JSON but not a map or a list of rows")
+    out = {}
+    rows = data.items() if isinstance(data, dict) else [
+        (r.get("key") or r.get("source"), r.get("text") or r.get("target"))
+        for r in (data or []) if isinstance(r, dict)]
+    for k, v in rows:
+        if k and v and str(v).strip():
+            out[str(k)] = str(v)
+    return out
+
+
+def cmd_translate(args):
+    """Fill `values-<locale>` from translation memory, glossary and an optional
+    external translator; print coverage and name every unmatched key.
+
+    Nothing is invented. A key with no exact match, no fuzzy match above the
+    threshold and no translator answer stays unmatched and is printed, because
+    a lookup that guesses is worse than a gap the user can see.
+    """
+    proj = Path(args.proj)
+    res = proj / "res"
+    if not find_default_strings(proj):
+        raise Fail("no values/strings.xml found - decode the APK first")
+    entries = [e for e in read_locale_entries(res, ["values"]) if e.translatable]
+    if not entries:
+        raise Fail("no translatable entries in values/")
+
+    # Arabic needs six plural categories and the source declares two, so the
+    # four it cannot supply have no source entry. The TM is keyed by TEXT, and
+    # the source text of `name|few` IS `name|other` - writing the bare source
+    # text there is what the fallback already does, and it silently replaces a
+    # proper Arabic `few`/`many` with English. Those rows are skipped unless the
+    # TM happens to carry an exact `name|category` key of its own.
+    entries = plural_rows_for(entries, args.locale)
+
+    pairs = load_tm(args.tm) if args.tm else []
+    if args.tm and not pairs:
+        raise Fail(f"{args.tm} holds no source/target pairs")
+    glossary = load_glossary(args.glossary) if args.glossary else {}
+    have = {} if args.force else existing_translations(res, args.locale)
+
+    kinds = collections.Counter()
+    filled, unmatched, todo = {}, [], []
+    for e in entries:
+        # a plural category the source cannot supply has no text at all; it is
+        # kept so the file still declares every Arabic category, but only an
+        # exact TM key may fill it (see the lookup loop below)
+        if not function_words(e.text) and "|" not in e.key:
+            continue
+        if have.get(e.key, "").strip():
+            filled[e.key] = have[e.key]
+            kinds["kept"] += 1
+        else:
+            todo.append((e.key, e.text))
+
+    # The TM is asked first: it is the project's own memory, and a hook wired to
+    # a service is there to fill what the memory could not. Reversing the order
+    # also means a hook that answers everything hides every TM hit in the stats
+    # - and the run reports coverage as if the memory were empty.
+    for key, text in todo:
+        if "|" in key and not text.strip():
+            # A category the source cannot supply has no text of its own: the
+            # source text of `name|few` is `name|other`, so a text match here
+            # would write the English fallback into a real Arabic form. Only an
+            # exact `name|category` TM key may fill it.
+            exact = dict(pairs).get(key, "").strip()
+            if exact:
+                filled[key] = exact
+                kinds["exact"] += 1
+            else:
+                unmatched.append(key)
+            continue
+        hit = tm_lookup(text, pairs, args.threshold)
+        if not hit:
+            continue
+        filled[key], kind, _score = hit
+        kinds[kind] += 1
+    if args.translator:
+        # only real text goes to the hook: an empty plural item has nothing to
+        # translate, and a service that answers anyway would put its own guess
+        # into a category Arabic needs a counted form for
+        rest = [(k, t) for k, t in todo if k not in filled and t.strip()]
+        if rest:
+            answer = translator_cmd(args.translator, rest)
+            for key, _text in rest:
+                if answer.get(key):
+                    filled[key] = answer[key]
+                    kinds["cmd"] += 1
+
+    gloss = 0
+    if glossary:
+        for key in filled:
+            filled[key], n = apply_glossary(filled[key], glossary)
+            gloss += n
+
+    # one file per source file, so a plural lands where its source keeps it
+    by_file = {}
+    for e in entries:
+        if e.key in filled:
+            by_file.setdefault(e.src or "strings.xml", []).append((e, filled[e.key]))
+    out_dir = res / f"values-{args.locale}"
+    sink = Writes(dry=getattr(args, "dry_run", False))
+    for fname, group in by_file.items():
+        write_strings_xml(out_dir, group, fname, sink=sink, locale=args.locale)
+
+    total = len(filled) + len(unmatched)
+    done = len(filled)
+    pct = 100.0 * done / total if total else 100.0
+    if args.unmatched_out:
+        sink.add(Path(args.unmatched_out),
+                 json.dumps(unmatched, ensure_ascii=False, indent=2) + "\n", len(unmatched))
+    if sink.dry:
+        print(f"[DRY] would write {done}/{total} ({pct:.1f}%) -> {out_dir}")
+        sink.report()
+        return 0
+    sink.commit()
+    detail = " ".join(f"{k}={v}" for k, v in sorted(kinds.items()) if v)
+    if gloss:
+        detail += f", glossary={gloss}"
+    print(f"[DONE] translate: {done}/{total} ({pct:.1f}%) -> {out_dir}/"
+          + (f"  ({detail})" if detail else ""))
+    if unmatched:
+        print(f"[FINDING] {len(unmatched)} key(s) unmatched - they render in the "
+              f"source language until the TM, glossary or translator covers them:")
+        for key in unmatched[:10]:
+            print(f"         {key}")
+        if len(unmatched) > 10:
+            print(f"         ... and {len(unmatched) - 10} more")
+    return 0
 
 def cmd_scan(args):
     target = Path(args.target)
@@ -3158,6 +3448,24 @@ def build_parser():
                    help="print what would be written, change nothing")
     common(s)
     s.set_defaults(func=cmd_apply)
+
+    s = sub.add_parser("translate", help="fill values-<locale> from a translation memory + glossary")
+    s.add_argument("proj")
+    s.add_argument("--tm", required=True, help="translation memory JSON (object or [source,target] list)")
+    s.add_argument("--glossary", help="JSON term map applied to matched translations")
+    s.add_argument("--locale", default="ar")
+    s.add_argument("--translator", metavar="cmd:ARGV",
+                   help="external translator hook: JSON keys on stdin, JSON text on stdout")
+    s.add_argument("--threshold", type=float, default=0.85,
+                   help="minimum fuzzy score 0-1 for a TM match (default 0.85)")
+    s.add_argument("--force", action="store_true",
+                   help="ignore translations already in values-<locale> and refill from the TM")
+    s.add_argument("--unmatched-out", dest="unmatched_out", metavar="FILE",
+                   help="write the unmatched keys as a JSON list")
+    s.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="print what would be written, write nothing")
+    common(s)
+    s.set_defaults(func=cmd_translate)
 
     s = sub.add_parser("lint", help="format specifier, escaping and coverage checks — CI friendly")
     s.add_argument("proj")

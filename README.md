@@ -189,6 +189,7 @@ still assembles — but the summary counts them and `all` exits non-zero.
 | `rtl <dir>` | set `android:supportsRtl` and migrate `left/right` → `start/end` across `res/**`. `--dry-run` to preview. |
 | `scaffold <dir>` | create `res/values-<locale>/`, a translation TSV, and (API 33+) `res/xml/locales_config.xml` + `android:localeConfig`. Every `values/*.xml` is read, not just `strings.xml`. `--dry-run` to preview. |
 | `apply <dir> --tsv` | import a translated table back into the locale folder, each entry into the file its source came from. `--dry-run` to preview. |
+| `translate <dir> --tm tm.json` | fill `values-<locale>` from a translation memory: exact match, then fuzzy (`--threshold`, default 0.85), then `--translator cmd:<argv>` so an external service can fill what the memory could not. `--glossary` rewrites terms inside a match. A candidate with a different format signature is never a match (`%d` for `%1$s` throws at runtime), a plural category the source cannot declare is never filled from the `other` text, and everything unmatched is listed with `--unmatched-out`. No network. `--dry-run` to preview. |
 | `lint <dir>` | escaping bugs, format-specifier drift, plural structure, coverage (overall and per file), text-like vectors, `RtlSymmetry` / `RtlHardcoded` / `RtlEnabled` (a `layoutDirection`/`textDirection` literal that beats the locale on an element with no physical attrs — `locale`, `firstStrong`-family, a mirrored-leaf `rtl`, a project-declared enum, an include-only clock/keypad row and every row of a build that sets `android:supportsRtl="false"` all stay silent, the opt-out itself being an error) / `supportsRtl` (an explicit `false` on `<application>` — RTL is off for the whole build and nothing can mirror; an absent attribute is not an error, it is what `aqlab rtl` adds) / `DirectionPins` (a pinned direction on a row, or on a container whose children set left/right), `ldrtl` drawable folders that are empty or hold a byte-identical copy of the LTR file. Non-zero exit on errors; `--fail-under` / `--fail-under-file` gate CI on coverage; `--fix` completes a missing `paddingStart`/`paddingEnd`-style partner, rewrites physical `gravity`/`textAlignment` values to `start`/`end`, migrates the physical attributes (and `gravity` values) of a row that only inherits a pinned direction, and drops a `layoutDirection="ltr"` pin set on the row itself, whether or not that row also carries physical attrs (migrating them with it; an `rtl` pin is a deliberate mirror and is kept) (`--fix --dry-run` plans all three). `--fix` also flips `android:supportsRtl="false"` — the one attribute, without the `aqlab rtl` migration and without its `minSdk`/`res/` requirements. |
 | `build <dir>` | `apktool b` → `zipalign` → `apksigner sign` → `apksigner verify` |
 | `diff <a.apk> <b.apk>` | added / removed / changed strings between two APKs, read straight from the resource table. Non-zero exit when they differ. |
@@ -512,9 +513,10 @@ inside `res/` — a `.tsv` under `res/` makes `aapt2 compile --dir res` fail.
 
 ## What it does *not* do
 
-* **It does not translate anything.** No machine translation, no AI. The last
-  column of the TSV is your job — the tool guarantees the mechanics survive once
-  it is filled.
+* **It does not translate by itself.** `translate` replays a translation memory and a
+  glossary you supply, and leaves every other key empty and named. It calls no service:
+  the text of an unmatched key stays in the source language, and the mechanics
+  (format specifiers, plural categories, escaping) survive when it is filled.
 * It does not touch strings compiled into DEX/smali or native code.
 * It does not mirror images or vector assets with baked-in Latin text.
 * It deliberately does not force `android:layoutDirection="rtl"` — that would
