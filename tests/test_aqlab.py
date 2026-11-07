@@ -3543,6 +3543,105 @@ def test_report_json_and_html(tmp):
     check("html is self-contained", "<script" not in page and "http://" not in page, "")
 
 
+
+def test_report_is_shared_by_scan_and_translate(tmp):
+    """One report shape from three commands.
+
+    The writer used to rebuild the report from lint's own arguments, so only
+    `lint` could emit one. `scan` and `translate` are the two commands a CI
+    driver runs either side of a release, and a schema with a `command` field
+    that is always `lint` tells a consumer nothing about which stage found what.
+    """
+    BADGE = "".join([
+        "package: name='com.x' versionCode='1' versionName='1'", chr(10),
+        "locales: '--_--' 'en'", chr(10),
+        "application-label:'X'", chr(10)])
+
+    def fake_run(cmd, **kw):
+        class R:
+            stdout = ""
+            stderr = ""
+        r = R()
+        r.stdout = ("  A: http://x:supportsRtl(0x010103af)=false" + chr(10)
+                    if "--file" in cmd else BADGE)
+        return r
+
+    apk = Path(tmp) / "rep.apk"
+    with zipfile.ZipFile(apk, "w") as z:
+        z.writestr("AndroidManifest.xml", "x")
+    rep_path = Path(tmp) / "scan.json"
+    orig_run, orig_tool = A.run, A.tool
+    try:
+        A.tool = lambda name: name
+        A.run = fake_run
+        with contextlib.redirect_stdout(io.StringIO()):
+            A.cmd_scan(argparse.Namespace(target=str(apk), json=False, jobs=None,
+                                          report="json", out=str(rep_path)))
+    finally:
+        A.run, A.tool = orig_run, orig_tool
+    rep = json.loads(rep_path.read_text(encoding="utf-8"))
+    check("scan report carries the schema", rep["schema"] == A.REPORT_SCHEMA, rep.get("schema"))
+    check("scan report names its producer", rep["command"] == "scan", rep.get("command"))
+    check("scan report records the RTL finding",
+          any(f["rule"] == "rtl-manifest" and f["level"] == "error" for f in rep["findings"]),
+          rep["findings"])
+    check("scan report counts the manifest error", rep["totals"]["errors"] == 1, rep["totals"])
+    check("scan report keeps the apk block",
+          rep["apk"]["package"] == "com.x" and rep["apk"]["supportsRtl"] is False, rep.get("apk"))
+    # Coverage is not a scan number. 0/0 here would read as "nothing translated".
+    check("scan report invents no coverage", rep["coverage"]["total"] == 0
+          and rep["coverage"]["files"] == {}, rep["coverage"])
+
+    work = Path(tmp) / "trrep"
+    res = work / "res" / "values"
+    res.mkdir(parents=True)
+    (res / "strings.xml").write_text("".join([
+        '<?xml version="1.0" encoding="utf-8"?>', chr(10), "<resources>",
+        '<string name="a">Hello</string>',
+        '<string name="b">Untouched</string>',
+        "</resources>"]), encoding="utf-8")
+    tm = Path(tmp) / "rep_tm.json"
+    tm.write_text(json.dumps([{"source": "Hello", "target": "\u0645\u0631\u062d\u0628\u0627"}]),
+                  encoding="utf-8")
+    trep = Path(tmp) / "tr.json"
+    rc = A.cmd_translate(argparse.Namespace(
+        proj=str(work), tm=str(tm), glossary=None, locale="ar", translator=None,
+        threshold=0.85, force=True, unmatched_out=None, dry_run=False, quiet=True,
+        report="json", out=str(trep)))
+    check("translate rc with a report", rc == 0)
+    tr = json.loads(trep.read_text(encoding="utf-8"))
+    check("translate report names its producer", tr["command"] == "translate",
+          tr.get("command"))
+    check("translate report counts the unmatched key",
+          any(f["rule"] == "translate-unmatched" and f["key"] == "b"
+              for f in tr["findings"]), tr["findings"])
+    check("translate report coverage is the run's coverage",
+          tr["coverage"]["covered"] == 1 and tr["coverage"]["total"] == 2, tr["coverage"])
+    check("translate report keeps the match breakdown",
+          tr["translate"]["matched"].get("exact") == 1, tr["translate"])
+    check("unmatched finding is not an error", tr["totals"]["errors"] == 0, tr["totals"])
+
+    # `--report --dry-run`: the report used to sit below the dry branch's
+    # `return`, so the one flag pairing made for "show me the gaps without
+    # writing values-ar" wrote no report at all — silently, exit 0.
+    drep = Path(tmp) / "tr_dry.json"
+    before = (work / "res" / "values-ar" / "strings.xml").read_bytes()
+    with contextlib.redirect_stdout(io.StringIO()):
+        rc = A.cmd_translate(argparse.Namespace(
+            proj=str(work), tm=str(tm), glossary=None, locale="ar", translator=None,
+            threshold=0.85, force=True, unmatched_out=None, dry_run=True, quiet=True,
+            report="json", out=str(drep)))
+    check("dry run still exits 0", rc == 0)
+    check("dry run writes the report", drep.exists(), "no report")
+    d = json.loads(drep.read_text(encoding="utf-8"))
+    check("dry report has the same coverage", d["coverage"]["covered"] == 1
+          and d["coverage"]["total"] == 2, d["coverage"])
+    check("dry report lists the gap", any(f["rule"] == "translate-unmatched"
+                                          for f in d["findings"]), d["findings"])
+    check("dry run wrote no translation",
+          (work / "res" / "values-ar" / "strings.xml").read_bytes() == before)
+
+
 def test_lint_requires_a_default_locale(tmp):
     """`lint` must refuse a project with no default-locale strings.
 
@@ -3633,6 +3732,7 @@ def main():
         test_scan(proj)
         test_fixture_locale_qualifier(tmp)
         test_report_json_and_html(tmp)
+        test_report_is_shared_by_scan_and_translate(tmp)
         test_lint_requires_a_default_locale(tmp)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0

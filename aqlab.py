@@ -1609,6 +1609,11 @@ def cmd_translate(args):
             continue
         hit = tm_lookup(text, pairs, args.threshold)
         if not hit:
+            # No TM row for this text. It used to `continue` here, which dropped
+            # the key from `unmatched` too — so the "N key(s) unmatched" summary
+            # and `--unmatched-out` only ever listed plural categories the source
+            # cannot supply, and a plain untranslated string vanished from both.
+            unmatched.append(key)
             continue
         filled[key], kind, _score = hit
         kinds[kind] += 1
@@ -1646,9 +1651,24 @@ def cmd_translate(args):
     if args.unmatched_out:
         sink.add(Path(args.unmatched_out),
                  json.dumps(unmatched, ensure_ascii=False, indent=2) + "\n", len(unmatched))
+    rep = None
+    fmt = getattr(args, "report", None)
+    if fmt:
+        findings = [("warn", key, "no TM/glossary/translator match — falls back to the "
+                     "source text", "translate-unmatched") for key in unmatched]
+        per_file = {f: (sum(1 for e, _t in g), len(g)) for f, g in by_file.items()}
+        rep = build_report(proj, args.locale, pct, done, total, per_file,
+                           findings, 0, False, command="translate")
+        rep["translate"] = {"matched": dict(sorted(kinds.items())),
+                            "glossary": gloss}
     if sink.dry:
         print(f"[DRY] would write {done}/{total} ({pct:.1f}%) -> {out_dir}")
         sink.report()
+        # A dry run is exactly when a report is wanted: it is the only way to
+        # see the coverage and the gaps without touching values-ar. Building it
+        # above the `return` is what makes `--report --dry-run` work at all.
+        if rep:
+            write_report(fmt, getattr(args, "out", None), rep, proj)
         return 0
     sink.commit()
     detail = " ".join(f"{k}={v}" for k, v in sorted(kinds.items()) if v)
@@ -1656,6 +1676,8 @@ def cmd_translate(args):
         detail += f", glossary={gloss}"
     print(f"[DONE] translate: {done}/{total} ({pct:.1f}%) -> {out_dir}/"
           + (f"  ({detail})" if detail else ""))
+    if rep:
+        write_report(fmt, getattr(args, "out", None), rep, proj)
     if unmatched:
         print(f"[FINDING] {len(unmatched)} key(s) unmatched - they render in the "
               f"source language until the TM, glossary or translator covers them:")
@@ -2592,6 +2614,26 @@ def scan_apk(apk, args):
         print(json.dumps({"package": pkg, "locales": locales,
                           "arabic": any(x.startswith("ar") for x in locales),
                           "supportsRtl": rtl_on}, ensure_ascii=False))
+    fmt = getattr(args, "report", None)
+    if fmt:
+        # `scan` has no translation coverage to report, so the coverage block is
+        # empty rather than invented: 0/0 would read as "nothing translated" on
+        # a finished app. Manifest facts are findings, so they land in the same
+        # findings table under their own rule ids.
+        findings = [("info" if rtl_on else "error", "AndroidManifest.xml:supportsRtl",
+                     "RTL supported" if rtl_on else "supportsRtl is off — run `aqlab rtl`",
+                     "rtl-manifest"),
+                    ("info" if any(x.startswith("ar") for x in locales) else "warn",
+                     "resources:ar", "Arabic resources present"
+                     if any(x.startswith("ar") for x in locales)
+                     else f"no Arabic resources ({len(locales)} locale(s))",
+                     "translation")]
+        rep = build_report(Path(apk), "ar", 0.0, 0, 0, {}, findings,
+                           sum(f[0] == "error" for f in findings), False,
+                           command="scan")
+        rep["apk"] = {"package": pkg, "label": label,
+                      "locales": locales, "supportsRtl": rtl_on}
+        write_report(fmt, getattr(args, "out", None), rep, Path(apk).parent)
     return 0
 
 
@@ -3089,8 +3131,9 @@ def cmd_lint(args):
           f"{sum(1 for i in issues if i[0] == 'warn')} warning(s)")
     fmt = getattr(args, "report", None)
     if fmt:
-        write_report(fmt, getattr(args, "out", None), proj, args.locale, cov,
-                     covered, len(src), per_file, issues, errors, gate_failed)
+        rep = build_report(proj, args.locale, cov, covered, len(src), per_file,
+                           issues, errors, gate_failed)
+        write_report(fmt, getattr(args, "out", None), rep, proj)
     return 1 if (errors or gate_failed) else 0
 
 
@@ -3098,7 +3141,7 @@ REPORT_SCHEMA = 1
 
 
 def build_report(proj, locale, cov, covered, total, per_file, issues, errors,
-                 gate_failed=False):
+                 gate_failed=False, command="lint"):
     """The lint result as plain data, so `--report` has one shape to emit.
 
     Rule ids come from the `add()` calls. An issue added without one is not a
@@ -3116,6 +3159,9 @@ def build_report(proj, locale, cov, covered, total, per_file, issues, errors,
     return {
         "schema": REPORT_SCHEMA,
         "tool": {"name": "aqlab", "version": __version__},
+        # which subcommand produced the file: one schema, three producers, and
+        # a consumer has to be able to tell a lint result from a translate one
+        "command": command,
         "project": proj.name,
         "locale": locale,
         "coverage": {"covered": covered, "total": total,
@@ -3166,10 +3212,13 @@ def _report_html(rep):
         f"<th>message</th></tr>{rows or '<tr><td colspan=4>clean</td></tr>'}</table>")
 
 
-def write_report(fmt, out, *args):
-    """`--report json|html`. Without `--out` it writes beside the project."""
-    proj = args[0]
-    rep = build_report(*args)
+def write_report(fmt, out, rep, proj):
+    """`--report json|html`. Without `--out` it writes beside the project.
+
+    Takes the finished dict, not the lint arguments: `scan` and `translate`
+    produce the same shape, and a writer that rebuilt the report from lint
+    state could not serve them.
+    """
     if fmt == "json":
         text, suffix = json.dumps(rep, indent=2, ensure_ascii=False), ".json"
     elif fmt == "html":
@@ -3691,6 +3740,9 @@ def build_parser():
     s.add_argument("--jobs", type=parse_jobs, default=None, metavar="N",
                    help="workers for the layout sweep (0 = every CPU); "
                         "default $AQLAB_JOBS or 1")
+    s.add_argument("--report", choices=("json", "html"), metavar="{json,html}",
+                   help="write the same report `lint --report` writes, from the APK facts")
+    s.add_argument("-o", "--out", metavar="PATH", help="report path (default: beside the APK)")
     common(s)
     s.set_defaults(func=cmd_scan)
 
@@ -3766,6 +3818,9 @@ def build_parser():
                    help="ignore translations already in values-<locale> and refill from the TM")
     s.add_argument("--unmatched-out", dest="unmatched_out", metavar="FILE",
                    help="write the unmatched keys as a JSON list")
+    s.add_argument("--report", choices=("json", "html"), metavar="{json,html}",
+                   help="write the coverage + unmatched keys as the shared report")
+    s.add_argument("-o", "--out", metavar="PATH", help="report path (default: beside the project)")
     s.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="print what would be written, write nothing")
     common(s)

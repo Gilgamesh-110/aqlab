@@ -449,11 +449,20 @@ Exit code is non-zero on errors, so it drops straight into CI.
 ```
 aqlab lint proj --report json              # -> proj/aqlab-report.json
 aqlab lint proj --report html -o r.html    # one file, no CDN, opens anywhere
+aqlab scan app.apk --report json -o a.json # same shape, from the APK's own facts
+aqlab translate proj --tm tm.json --report json --dry-run
 ```
 
 The JSON is schema-versioned (`schema: 1`) and byte-stable between runs on the
 same tree, so it diffs in a PR. Every finding carries the rule that produced it;
 the per-rule table sums to the finding list, so nothing can fall out of it.
+
+`lint`, `scan` and `translate` all write that one schema; the `command` field says
+which stage produced it. `scan` reports manifest/locale facts as findings and
+leaves the coverage block empty rather than inventing a 0%; `translate` records
+coverage, the match breakdown (`exact`/`fuzzy`/`kept`/`cmd`) and one finding per
+unmatched key. `--dry-run` still writes the report: previewing the gaps is what
+a report is for.
 
 ## The other part nobody does: Arabic has six plurals, not two
 
