@@ -2281,6 +2281,11 @@ def gravity_fix(text, only=None):
     return hit_re.sub(one, text), hits[0]
 
 
+# `<include layout="@layout/foo" — the only attribute that tells the fixer
+# which other file the pinned row actually renders.
+INCLUDE_TARGET_RE = re.compile(
+    r'(?<![\w.-])layout\s*=\s*[\x22\x27](@layout/[\w.]+)[\x22\x27]')
+
 ANY_DIR_RE = re.compile(r'(?<![\w.-])(?:android:|app:)?(?:layout|text)Direction\s*=')
 # A *local* pin on a row that also carries physical attributes is the same
 # defect one level up, and the fixer's answer differs: the ancestor pin in
@@ -2355,8 +2360,17 @@ def fix_pin_nested(proj, dry=False):
     `gravity_fix` runs over the row with the finding's own attribute list, and
     never over the file: the sibling rows were not reported and must not move.
 
+    An `<include>` has no attributes worth migrating here that live in this
+    file: `direction_pins` reports one only for the padding/margin the include
+    tag carries itself, and `rewrite_xml_attrs` would migrate those in place.
+    What it cannot see is the *target* layout: `<include layout="@layout/foo">`
+    pulls `foo` into the pinned row, so a physical attribute inside `foo` is
+    under the pin too, while `foo` is a separate file that is never reported.
+    The include tag names the layout it wants; the row inside it is fixed there.
+
     Returns rows changed; idempotent because `migrate_attr` returns `None` for a
-    start/end name and the token table has no start/end left to rewrite.
+    start/end name and the token table has no start/end left to rewrite, and
+    because a fixed include no longer holds a physical attribute.
     """
     res = Path(proj) / "res"
     if not res.is_dir():
@@ -2366,6 +2380,7 @@ def fix_pin_nested(proj, dry=False):
         if kind == "pinNested":
             broken.setdefault(path, []).append((tag, names))
     n = 0
+    pinned_includes = []  # [(path, target_rel)] walked after the loop
     for rel, wanted in sorted(broken.items()):
         f = Path(proj) / rel
         try:
@@ -2395,6 +2410,19 @@ def fix_pin_nested(proj, dry=False):
             fixed, hits = rewrite_xml_attrs("<x" + body + ">")
             if not hits:
                 continue
+            if tag == "include":
+                tgt = INCLUDE_TARGET_RE.search(body)
+                # `@layout/x` is a *resource name*, so the folder qualifier is
+                # unknown: the same layout may exist in `layout/`, `layout-ar/`
+                # and `layout-ldrtl/`. The fix therefore runs on every file that
+                # defines that name, which is what the device resolves per
+                # qualifier anyway — repairing one copy leaves the Arabic build
+                # broken.
+                if tgt:
+                    name = tgt.group(1).rsplit("/", 1)[-1]
+                    for g in sorted(res.glob("layout*/*.xml")):
+                        if g.stem == name and g.name.startswith(name + "."):
+                            pinned_includes.append(g.relative_to(proj).as_posix())
             wanted.pop(0)
             out.append(txt[i:pos] + fixed[2:-1])
             i = pos + len(body)
@@ -2404,6 +2432,21 @@ def fix_pin_nested(proj, dry=False):
             if not dry:
                 f.write_text("".join(out), encoding="utf-8", newline="")
             n += done
+    # The include target is a whole layout, not a row: it is not under the pin
+    # at its own top level, so `direction_pins` never reports it there. Every
+    # physical attribute in it is rendered inside the pinned row, hence the
+    # file-wide sweep.
+    for rel in dict.fromkeys(pinned_includes):
+        f = Path(proj) / rel
+        try:
+            txt = f.read_text(encoding="utf-8", newline="")
+        except OSError:
+            continue
+        out, hits = rewrite_xml_attrs(txt)
+        if out != txt:
+            if not dry:
+                f.write_text(out, encoding="utf-8", newline="")
+            n += hits
     return n
 
 

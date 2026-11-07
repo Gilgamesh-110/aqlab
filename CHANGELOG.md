@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`lint --fix` now repairs an `<include>` that renders under a direction pin.**
+  `direction_pins` can only name the include tag it sees, so a `paddingLeft`
+  living inside the included layout — the layout the pin actually keeps LTR —
+  was found by neither the check nor the fixer, and the row stayed half
+  migrated. The fixer resolves `layout="@layout/x"` and sweeps every file
+  defining that name, because a resource name carries no qualifier: `layout/x`
+  and `layout-ldrtl/x` are one name to aapt and the device picks one per
+  direction. Measured on the real APK: unchanged at 41 warnings / 1 error —
+  its pinned includes carry no physical attribute of their own.
 - **A single-quoted attribute value is no longer invisible.** XML allows either
   quote character on an attribute value and aapt normalises both, so
   `android:paddingLeft='4dp'` is valid Android — but every reader in the tool

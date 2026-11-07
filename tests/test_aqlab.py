@@ -137,6 +137,57 @@ def test_lint_fix_pin_nested(tmp):
     check("pin fix idempotent", A.fix_pin_nested(root) == 0 and not pins())
 
 
+
+def test_pin_nested_include(tmp):
+    """An `<include>` under a pin renders another layout *inside* the pinned row.
+
+    `direction_pins` reports the include only for the attributes on the include
+    tag itself, so the padding inside `@layout/foo` was never named by a finding
+    and never fixed — the row stayed half-migrated. The fixer now resolves the
+    include's `layout=` and sweeps every file defining that name, because a
+    resource name has no qualifier: `layout/foo` and `layout-ldrtl/foo` are the
+    same name to aapt2 and the device picks one per direction.
+
+    Measured on a real APK: `material_timepicker_textinput_display` is a pinned
+    ltr linear layout whose children are includes, so the defect it names can
+    only be reached through the include.
+    """
+    root = Path(tmp) / "pininc"
+    res = root / "res"
+    (res / "layout").mkdir(parents=True)
+    (res / "layout-ldrtl").mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application/></manifest>', encoding="utf-8")
+    row = res / "layout" / "screen.xml"
+    row.write_text(
+        HEAD +
+        '<LinearLayout android:layoutDirection="ltr" android:orientation="horizontal">\n'
+        '    <include layout="@layout/chip" android:paddingLeft="1.0dip"/>\n'
+        '</LinearLayout>\n', encoding="utf-8")
+    for d in ("layout", "layout-ldrtl"):
+        (res / d / "chip.xml").write_text(
+            HEAD + '<LinearLayout android:paddingLeft="3.0dip"'
+                   ' android:layout_marginRight="2.0dip"/>\n',
+            encoding="utf-8")
+    before = (res / "layout" / "chip.xml").read_text(encoding="utf-8")
+    check("include dry-run writes nothing",
+          A.fix_pin_nested(root, dry=True) > 0
+          and (res / "layout" / "chip.xml").read_text(encoding="utf-8") == before)
+    check("include target swept", A.fix_pin_nested(root) > 0)
+    for d in ("layout", "layout-ldrtl"):
+        t = (res / d / "chip.xml").read_text(encoding="utf-8")
+        check(f"{d} chip migrated",
+              'android:paddingStart="3.0dip"' in t
+              and 'android:layout_marginEnd="2.0dip"' in t, t)
+    # The include tag carries no physical attribute, so nothing else moved and a
+    # second pass finds nothing: the fix is idempotent.
+    check("include fix idempotent", A.fix_pin_nested(root) == 0)
+    check("include tag and pin untouched",
+          '@layout/chip' in row.read_text(encoding="utf-8")
+          and 'android:layoutDirection="ltr"' in row.read_text(encoding="utf-8"))
+
+
 def test_pin_nested_gravity(tmp):
     """A `gravity` under an inherited pin is repaired by the same fixer.
 
@@ -2231,6 +2282,7 @@ def main():
         test_lint_fix(tmp)
         test_lint_fix_pin_nested(tmp)
         test_pin_nested_gravity(tmp)
+        test_pin_nested_include(tmp)
         test_lint_fix_pin_local(tmp)
         test_direction_pins(tmp)
         test_rtl(proj)
