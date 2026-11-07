@@ -2185,6 +2185,99 @@ def test_mixed_direction_is_not_a_finding():
     check("tags extracted", A._tags("<b>hi</b>") == ["b"])
 
 
+def test_rtl_enabled(tmp):
+    """RtlEnabled: a direction literal that wins over the locale but is not a pin.
+
+    `direction_pins` only names a row that also carries physical left/right
+    attributes; the same literal on a row with none still beats the locale, and
+    nothing reported it. The half that must stay silent is measured on the real
+    APK: its four `layoutDirection="locale"` are the correct spelling and its two
+    `ltr` pins sit on Material clock/timepicker wrappers whose whole content is
+    includes of hour/minute parts — order, not language — so `rtl_enabled`
+    reports 0 there.
+    """
+    root = Path(tmp) / "enabled"
+    res = root / "res"
+    (res / "layout").mkdir(parents=True)
+    (res / "layout" / "a.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' xmlns:app="http://schemas.android.com/apk/res-auto">\n'
+        '  <LinearLayout android:orientation="horizontal"'
+        ' android:layoutDirection="ltr"><TextView android:text="a"/></LinearLayout>\n'
+        '  <LinearLayout android:orientation="horizontal"'
+        ' android:layoutDirection="locale"><TextView android:text="a"/></LinearLayout>\n'
+        '  <TextView android:textDirection="ltr" android:text="a"/>\n'
+        '  <TextView android:textDirection="rtl" android:text="a"/>\n'
+        '  <TextView android:layoutDirection="rtl" android:text="a"/>\n'
+        '  <com.acme.Custom android:layoutDirection="ltr"/>\n'
+        '  <LinearLayout android:orientation="horizontal"'
+        ' app:layoutDirection="ltr"><TextView android:text="a"/></LinearLayout>\n'
+        '</LinearLayout>', encoding="utf-8")
+
+    found = A.rtl_enabled(root)
+    check("ltr row with text is a finding",
+          sum(1 for g in found if g[0] == "layoutDirection" and g[3] == "ltr"
+              and g[2] == "LinearLayout") == 2, str(found))
+    check("textDirection=ltr is a finding",
+          any(g[0] == "textDirection" and g[3] == "ltr" and g[2] == "TextView"
+              for g in found), str(found))
+    check("locale is the default spelled out, not a finding",
+          not any(g[3] == "locale" for g in found), str(found))
+    check("textDirection=rtl follows the locale, not a finding",
+          not any(g[0] == "textDirection" and g[3] == "rtl" for g in found), str(found))
+    check("rtl on a leaf is a mirrored glyph, not a finding",
+          not any(g[3] == "rtl" for g in found), str(found))
+    check("a dotted custom class may read its own styleable",
+          not any(g[2] == "com.acme.Custom" for g in found), str(found))
+
+    # The attribute must be attributed to the element that writes it: a start
+    # tag encloses its whole subtree, so a scan of the outer body would report
+    # the child's literal against the parent's tag, and count the same defect
+    # twice under two different names.
+    (res / "layout" / "nested.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' android:layoutDirection="ltr">\n'
+        '  <TextView android:text="a" android:textDirection="ltr"/>\n'
+        '</LinearLayout>', encoding="utf-8")
+    nest = [g for g in A.rtl_enabled(root) if g[1].endswith("nested.xml")]
+    check("a literal belongs to the element that writes it",
+          len(nest) == 2 and [g[2] for g in nest] == ["LinearLayout", "TextView"], str(nest))
+
+    # Order-driven content: a clock face is ltr in every locale and pinning it
+    # is right. Measured shape of the real APK's two pins.
+    (res / "layout" / "clock.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' android:orientation="horizontal" android:layoutDirection="ltr">\n'
+        '  <include android:id="@+id/hour" layout="@layout/chip"/>\n'
+        '  <include layout="@layout/divider"/>\n'
+        '</LinearLayout>', encoding="utf-8")
+    check("an include-only row is order-driven, not language-driven",
+          not any(g[1].endswith("clock.xml") for g in A.rtl_enabled(root)),
+          str(A.rtl_enabled(root)))
+
+    # A project-declared enum: aapt2 refuses a duplicate platform constant, so a
+    # declared value is the app's own and stripping it breaks the compile.
+    (res / "values").mkdir()
+    (res / "values" / "attrs.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+        '  <attr name="layoutDirection"><enum name="mirror" value="1"/></attr>\n'
+        '</resources>', encoding="utf-8")
+    (res / "layout" / "own.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' android:layoutDirection="mirror"><TextView android:text="a"/></LinearLayout>',
+        encoding="utf-8")
+    check("declared enum value is the app's own",
+          A.declared_direction_values(root) == {"mirror"},
+          str(A.declared_direction_values(root)))
+    check("a declared enum value is never a finding",
+          not any(g[3] == "mirror" for g in A.rtl_enabled(root)),
+          str(A.rtl_enabled(root)))
+
+
 def test_dedupe_and_styles(tmp):
     """Theme overlays carry both `paddingLeft` and `paddingStart`; emitting both
     makes aapt2 fail with `duplicate attribute`."""
@@ -2585,6 +2678,7 @@ def main():
         test_lint_fix_pin_local(tmp)
         test_pin_drop_removes_every_pin(tmp)
         test_direction_pins(tmp)
+        test_rtl_enabled(tmp)
         test_rtl(proj)
         test_lint(proj)
         test_dedupe_and_styles(tmp)

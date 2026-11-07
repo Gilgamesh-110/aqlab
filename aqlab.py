@@ -1639,6 +1639,130 @@ def direction_pins(proj):
     return out
 
 
+# `values/attrs.xml` is where a project declares its own `layoutDirection`
+# attribute — aapt2 rejects the file if the enum repeats a platform constant, so
+# a declared enum is the author's own and dropping it is what breaks the build.
+# The platform's own five values are spelled out for the docs reader.
+# A direction pin is only a language decision where there is language to flow.
+# A clock face, a time picker, a numeric keypad and a media timeline are the same
+# shape in every locale and pinning them is right. Measured on a real APK: the
+# only two `ltr` pins are Material's `material_clock_display` and
+# `material_timepicker_textinput_display`, whose whole content is `<include>`s of
+# hour/minute parts — no text widget anywhere beneath, so neither is a finding.
+RE_TEXT_WIDGET = re.compile(r"<(?:\w+\.)*"
+                            r"(?:TextView|EditText|Button|AutoCompleteTextView)\b")
+
+
+RE_DECLARES_DIRECTION_ENUM = re.compile(
+    r"<attr\b[^>]*\bname\s*=\s*[\x22\x27](?:android:)?layoutDirection[\x22\x27]"
+    r"[^>]*?>(?P<flags>.*?)</attr>", re.DOTALL)
+
+
+def declared_direction_values(proj):
+    """Project-local `layoutDirection` enum values a pin must not be stripped of.
+
+    Returns the set of value names declared by the app itself. Empty for every
+    app that only uses the platform attribute — which is nearly all of them.
+    """
+    out = set()
+    for f in (Path(proj) / "res").glob("values*/**/*.xml"):
+        try:
+            txt = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in RE_DECLARES_DIRECTION_ENUM.finditer(txt):
+            out.update(re.findall(r"<enum\b[^>]*\bname\s*=\s*[\x22\x27]([\w-]+)",
+                                  m.group("flags")))
+    return out
+
+
+def rtl_enabled(proj, locale="ar"):
+    """`layoutDirection`/`textDirection` set to a literal that is *not* a pin.
+
+    `direction_pins` reports the one case that is unambiguously a defect: a pin
+    laid over physical left/right attributes. This check is the other half of
+    Android's RtlEnabled: any direction literal on an element that holds nothing
+    physical still wins over the locale, so the element keeps the direction of the
+    language it was written in — the Arabic screen shows it mirrored.
+
+    Three literals are not defects and are skipped before anything is measured:
+      * `locale` — the default spelled out; it is the correct way to say "follow
+        the language" and the platform resolves it to the current direction.
+      * `firstStrong`, `anyRtl`, `inherit` — text directions that resolve from
+        the content or the parent, so they follow RTL by themselves.
+      * `rtl` on a *leaf* — a mirrored icon is a decision about that glyph, not
+        about a container, and `direction_pins` already covers the row case.
+
+    `ltr` is reported on any element. It is the direction a string resource is
+    written in, not the direction the app is displayed in, and it is the one
+    literal `aqlab lint --fix` can drop safely (`fix_pin_local` already does).
+
+    Not reported, measured rather than assumed:
+      * a value the project declares in its own `values/attrs.xml` — aapt2
+        refuses a duplicate enum, so an app that declares one is using it, and a
+        `--fix` that strips it breaks the compile. `declared_direction_values`.
+      * an `app:` namespace attribute on a view whose class is a known custom
+        one — the app's own class may read the value from its styleable, so it is
+        the same promise as a declared enum, one level further out.
+
+    Measured on a real APK: four `layoutDirection="locale"` Literals in Material
+    layouts (silent, they are the correct spelling) and two `ltr` pins, both
+    already reported by `direction_pins`.
+
+    Returns [(kind, path, tag, value)] with kind "layoutDirection" or
+    "textDirection".
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return []
+    harmless = {"locale", "firstStrong", "anyRtl", "inherit"}
+    declared = declared_direction_values(proj)
+    out = []
+    for f in sorted(res.glob("layout*/**/*.xml")):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(proj).as_posix()
+        txt = f.read_text(encoding="utf-8", errors="replace")
+        # `walk_layout` hands back the start tag's own text in `body`, which stops
+        # at its `>` — exactly this element's attributes, never its children's.
+        # `full=True` adds the body's offset and the element's depth, both needed
+        # to delimit the subtree for the text-widget test below.
+        bounds = [(off, tag, body, dep, sc) for tag, body, dep, sc, off
+                  in walk_layout(txt, full=True)]
+        for n, (off, tag, body, dep, sc) in enumerate(bounds):
+            # The subtree ends at the next start tag that is not deeper — the
+            # next sibling, an uncle, or (for a leaf) the tag right after it.
+            stop = len(txt)
+            if not sc:
+                for m2 in range(n + 1, len(bounds)):
+                    if bounds[m2][3] <= dep:
+                        stop = bounds[m2][0]
+                        break
+            subtree = txt[off:stop]
+            for m in re.finditer(r"(?<![\w.\-])((?:\w+:)?)(layoutDirection|textDirection)\s*=\s*[\x22\x27]([\w-]+)", body):
+                # One attribute per match, on the element that actually carries
+                # it: `body` is the start tag alone.
+                prefix, attr, val = m.group(1), m.group(2), m.group(3)
+                if val in harmless or val in declared:
+                    continue
+                if attr == "textDirection" and val == "rtl":
+                    continue  # follows the locale on an RTL screen anyway
+                if attr == "layoutDirection" and val == "rtl" and looks_leaf(tag):
+                    continue  # a mirrored glyph, not a container direction
+                if prefix and "." in tag:
+                    continue  # a dotted class is custom: it may read its own styleable
+                # The subtree, plus the element's own tag: `walk_layout` yields
+                # only the tag's own text, so a wrapper reads as empty and its
+                # children are the only evidence; a leaf's subtree starts after
+                # its `<`, so the tag has to be tested separately or every leaf
+                # looks empty and its own pin is dropped.
+                if not (RE_TEXT_WIDGET.search(subtree)
+                        or RE_TEXT_WIDGET.match("<" + tag)):
+                    continue  # see `RE_TEXT_WIDGET` — order, not language
+                out.append((attr, rel, tag, val))
+    return out
+
+
 def rtl_drawable_dirs(proj):
     """`res/drawable-ldrtl-*` folders that mirror nothing.
 
@@ -2269,6 +2393,16 @@ def cmd_lint(args):
                 f'left/right attrs — it stays {val} in {args.locale}'
                 + ('; `aqlab lint --fix` drops the pin and migrates the row'
                    if val == 'ltr' else ''))
+
+    # RtlEnabled: a direction literal that is not a pin but still wins over the
+    # locale. `direction_pins` only names the row that also carries physical
+    # attributes; this is the same literal on a row that carries none, where the
+    # default would have followed the language and the literal does not.
+    for attr, path, tag_, val in rtl_enabled(proj, args.locale):
+        add("warn", f"{path}:<{tag_}>",
+            f'{attr}="{val}" overrides the locale on an element with no physical '
+            f'attrs — {args.locale} shows it {val}'
+            + ("; `aqlab lint --fix` drops the pin" if val == "ltr" else ""))
 
     # A `ldrtl` folder that mirrors nothing is not a translation problem, so it
     # is reported without the locale gate above — it costs the same in any RTL
