@@ -2734,14 +2734,15 @@ def test_decode_sources_flag():
     Wired hermetically: apktool and the subprocess runner are stubbed so the
     check needs neither a JRE nor a jar.
     """
+    plain = _tmp_zip("plain.apk", {"AndroidManifest.xml": b"x"})
     seen = []
     orig_cmd, orig_run = A.apktool_cmd, A.run
     A.apktool_cmd = lambda: ["apktool"]
     A.run = lambda cmd, **kw: seen.append(list(cmd))
     try:
         for ws in (False, True):
-            A.cmd_decode(argparse.Namespace(apk="x.apk", out="o", framework=None,
-                                            quiet=True, with_sources=ws))
+            A.cmd_decode(argparse.Namespace(apk=str(plain), out="o", framework=None,
+                                            quiet=True, with_sources=ws, split=None))
     finally:
         A.apktool_cmd, A.run = orig_cmd, orig_run
     check("decode skips smali by default", "-s" in seen[0])
@@ -2776,7 +2777,8 @@ def test_all_pipeline_summary():
                              "[OK] 0 error(s), 3 warning(s)")
     A.cmd_build = rec("build", "[DONE] signed -> demo-ar-aligned.apk")
     try:
-        ns = argparse.Namespace(apk="demo.apk", out="demo-ar.apk", tsv=None, locale="ar",
+        ns = argparse.Namespace(apk=str(_tmp_zip("demo.apk", {"AndroidManifest.xml": b"x"})),
+                                out="demo-ar.apk", tsv=None, locale="ar",
                                 verbose=False, quiet=True, ks=None, ks_pass="",
                                 ks_alias=None, framework=None, force_min_sdk=False,
                                 with_sources=False)
@@ -2806,7 +2808,8 @@ def test_all_pipeline_summary():
 
     # no -o means the summary would name a file that does not exist
     try:
-        A.cmd_all(argparse.Namespace(apk="demo.apk", out=None, tsv=None, locale="ar",
+        A.cmd_all(argparse.Namespace(apk=str(_tmp_zip("demo.apk", {"AndroidManifest.xml": b"x"})),
+                                     out=None, tsv=None, locale="ar",
                                      verbose=False, quiet=True, ks=None, ks_pass="",
                                      ks_alias=None, framework=None, force_min_sdk=False,
                                      with_sources=False))
@@ -2820,17 +2823,38 @@ def test_all_pipeline_summary():
     try:
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
             try:
-                A.cmd_all(argparse.Namespace(apk="demo.apk", out="x.apk", tsv=None,
+                A.cmd_all(argparse.Namespace(apk=str(_tmp_zip("demo.apk", {"AndroidManifest.xml": b"x"})),
+                                             out="x.apk", tsv=None,
                                              locale="ar", verbose=False, quiet=True,
                                              ks=None, ks_pass="", ks_alias=None,
                                              framework=None, force_min_sdk=False,
-                                             with_sources=False))
+                                             with_sources=False, split=None))
                 aborted = False
             except A.Fail as e:
                 aborted = "boom" in str(e)
     finally:
         A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build = orig
     check("all: a failed stage aborts the pipeline", aborted)
+
+
+def test_all_unsigned_output_line():
+    """An unsigned build must still name its artifact in the summary.
+
+    Measured on the real APK: `all --split ar` printed `output : None` because
+    the only pattern tried was `signed ->`. Every pipeline without a keystore -
+    the default - reported no artifact at all.
+    """
+    import re as _re
+    # read the pattern out of aqlab itself, so a narrowed pattern fails here
+    src = Path(A.__file__).read_text(encoding="utf-8")
+    pat_src = _re.search(r'built = _re\.search\(r"(.*?)", build_out', src.replace("re.search", "_re.search"))
+    pat = _re.compile(pat_src.group(1).encode().decode("unicode_escape"), _re.M)
+    line = "[DONE] built -> x-ar-aligned.apk  (unsigned; pass --ks to sign)"
+    check("all: an unsigned build's output path is read from its own line",
+          pat.search(line).group(1) == "x-ar-aligned.apk", str(pat.search(line)))
+    line2 = "[DONE] signed -> x-ar-aligned.apk"
+    check("all: a signed build's output path is still read",
+          pat.search(line2).group(1) == "x-ar-aligned.apk", str(pat.search(line2)))
 
 
 def test_plural_structure(tmp):
@@ -3020,6 +3044,120 @@ def test_scan_apk_supports_rtl(tmp):
           '"supportsRtl": false' in out["false"], out["false"])
     check("scan still reads the locales",
           "'ar'" in out["true"] or "ar" in out["true"], out["true"])
+
+
+def _tmp_zip(name, entries):
+    """Write a throwaway zip into the test tmp dir and return its Path."""
+    d = Path(tempfile.mkdtemp(prefix="aqlab-layout-"))
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / name
+    with zipfile.ZipFile(p, "w") as z:
+        for k, v in entries.items():
+            z.writestr(k, v)
+    return p
+
+
+def test_apk_layout():
+    """A container is classified, never guessed.
+
+    This guards a silent-wrong-answer bug, not a missing feature: apktool opens
+    any zip, so handing `decode` an XAPK or an AAB used to produce a decode of
+    the container itself (an AAB decodes to a project with no res/ at all) and
+    a build that fails much later with an unrelated message. Ordering matters —
+    a split APK *is* a zip of APKs and also contains AndroidManifest.xml.
+    """
+    apk = _tmp_zip("l_apk.apk", {"AndroidManifest.xml": b"x", "res/a.xml": b"y"})
+    xapk = _tmp_zip("l.xapk", {"base.apk": b"PK", "split_config.ar.apk": b"PK"})
+    aab = _tmp_zip("l.aab", {"BundleConfig.pb": b"x",
+                             "base/manifest/AndroidManifest.xml": b"x"})
+    junk = _tmp_zip("l_junk.zip", {"readme.txt": b"x"})
+    check("layout: plain apk", A.apk_layout(apk) == "apk")
+    check("layout: xapk", A.apk_layout(xapk) == "xapk")
+    check("layout: aab beats its inner manifest path", A.apk_layout(aab) == "aab")
+    check("layout: unknown zip is not an apk", A.apk_layout(junk) == "unknown")
+
+    bad = apk.parent / "l_notzip.apk"
+    bad.write_bytes(b"not a zip")
+    try:
+        A.apk_layout(bad)
+    except A.Fail as e:
+        check("layout: corrupt file fails loudly", "not a zip/apk" in str(e), str(e))
+    else:
+        check("layout: corrupt file fails loudly", False, "no Fail raised")
+
+
+def test_split_parts_order():
+    """base ranks before every split; a locale split is not mistaken for base."""
+    # `base.apk` sorts AFTER both splits alphabetically, so any sort that does
+    # not rank it explicitly puts a split first.
+    xapk = _tmp_zip("o.xapk", {"splits/split_config.xxhdpi.apk": b"PK",
+                               "aa_split_config.arm64_v8a.apk": b"PK",
+                               "base.apk": b"PK"})
+    parts = A.split_parts(xapk)
+    check("xapk: base decodes first", parts[0][1] == "base.apk", str(parts))
+    check("xapk: every split is listed", len(parts) == 3, str(parts))
+    check("xapk: split labels keep their qualifier",
+          "split_config.xxhdpi" in [l for l, _ in parts], str(parts))
+
+
+def test_decode_refuses_container_ambiguity():
+    """`decode` on an XAPK decodes each part; `all` refuses without --split.
+
+    The failure this guards measured as a real build error, not a wrong file:
+    `aqlab all some.xapk` decoded the container, then rtl/lint ran on a
+    directory holding no res/, and the error surfaced three stages later.
+    """
+    xapk = _tmp_zip("d.xapk", {"base.apk": b"PK", "split_config.ar.apk": b"PK"})
+    seen, err = [], io.StringIO()
+    orig_cmd, orig_run = A.apktool_cmd, A.run
+    A.apktool_cmd = lambda: ["apktool"]
+    A.run = lambda cmd, **kw: seen.append(list(cmd))
+
+    def ns(**kw):
+        base = dict(apk=str(xapk), out=str(xapk.parent / "dx"), framework=None,
+                    quiet=True, with_sources=False, split=None)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            A.cmd_decode(ns())
+        out = buf.getvalue()
+        check("decode xapk: one apktool run per part", len(seen) == 2, str(seen))
+        check("decode xapk: base goes to the requested dir",
+              any(str(xapk.parent / "dx") == str(c[c.index("-o") + 1]) for c in seen), str(seen))
+        check("decode xapk: split goes to its own dir",
+              "dx-split_config.ar" in out, out)
+
+        seen.clear()
+        # The extracted part is a temp file, so watch what gets copied out of
+        # the container instead: a wrong selector copies base.apk.
+        pulled = []
+        orig_ex = A.extract_split
+        A.extract_split = lambda c, member, o: (pulled.append(member), orig_ex(c, member, o))[1]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                A.cmd_decode(ns(split="ar"))
+        finally:
+            A.extract_split = orig_ex
+        check("decode --split: exactly one part", len(seen) == 1, str(seen))
+        check("decode --split: the named part, not merely the first one",
+              pulled == ["split_config.ar.apk"], str(pulled))
+    finally:
+        A.apktool_cmd, A.run = orig_cmd, orig_run
+
+    try:
+        with contextlib.redirect_stderr(err):
+            A.cmd_all(argparse.Namespace(apk=str(xapk), out="o.apk", framework=None,
+                                         quiet=True, with_sources=False,
+                                         split=None, locale="ar", ts=None,
+                                         tsv=None, ks=None, ks_pass=None,
+                                         ks_alias=None, verbose=False))
+    except A.Fail as e:
+        check("all on an xapk refuses without --split", "--split" in str(e), str(e))
+    else:
+        check("all on an xapk refuses without --split", False, "no Fail raised")
 
 
 def test_scan(proj):
@@ -3313,6 +3451,10 @@ def main():
         test_migrate_prefilter()
         test_all_pipeline_summary()
         test_decode_sources_flag()
+        test_apk_layout()
+        test_split_parts_order()
+        test_decode_refuses_container_ambiguity()
+        test_all_unsigned_output_line()
         test_plural_structure(tmp)
         test_plural_file_roundtrip(tmp)
         test_rtl_self_closing_application(tmp)

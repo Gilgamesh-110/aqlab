@@ -671,19 +671,126 @@ def escape_android(text):
 # --------------------------------------------------------------------------
 
 
-def cmd_decode(args):
-    out = args.out or (Path(args.apk).stem + "-decoded")
+def apk_layout(path):
+    """What a container actually holds: `apk`, `xapk` (zip of APKs) or `aab`.
+
+    A split build ships a base APK plus `split_config.<abi>.apk` and
+    `split_config.<locale>.apk`. Decoding one of those silently produces a
+    project whose build fails or, worse, a base-APK-only decode that looks
+    complete and is missing Arabic because the strings live in a locale split.
+    So the shape is always classified, and `decode` refuses an ambiguous one
+    rather than picking."""
+    p = Path(path)
+    try:
+        with zipfile.ZipFile(p) as z:
+            names = z.namelist()
+    except (zipfile.BadZipFile, OSError) as e:
+        raise Fail(f"{p.name} is not a zip/apk: {e}")
+    if "BundleConfig.pb" in names or "base/manifest/AndroidManifest.xml" in names:
+        return "aab"
+    if "AndroidManifest.xml" in names:
+        return "apk"
+    inner = [n for n in names if n.lower().endswith(".apk")]
+    if inner:
+        return "xapk"
+    return "unknown"
+
+
+def split_parts(path, kind=None):
+    """[(label, display_name)] of the APKs in an XAPK, base first."""
+    with zipfile.ZipFile(path) as z:
+        inner = [n for n in z.namelist() if n.lower().endswith(".apk")]
+    def rank(n):
+        # The directory prefix is ignored on purpose: an XAPK may keep its base
+        # at the root and the splits in `splits/`, and a raw string sort would
+        # then put `splits/...` first and hand the base to stage two last.
+        base = Path(n).name.lower()
+        is_split = "split" in base
+        return (0 if not is_split else 1, base, n.lower())
+    out = []
+    for n in sorted(inner, key=rank):
+        base = Path(n).name
+        m = re.match(r"split_config\.([A-Za-z0-9_\-]+)\.apk$", base)
+        # The label is the qualifier alone, so `--split ar` is enough to name a
+        # locale part without spelling out the whole filename.
+        if base.startswith("split_config") and m:
+            label = "split_config." + m.group(1)
+        else:
+            label = base if base.startswith("split") else "base"
+        out.append((label, n))
+    return out
+
+
+def extract_split(path, member, out):
+    """Pull one APK out of an XAPK container to a real file."""
+    with zipfile.ZipFile(path) as z, z.open(member) as src, open(out, "wb") as dst:
+        shutil.copyfileobj(src, dst)
+    return out
+
+
+def decode_one(apk, out, args):
+    """apktool decode one APK into one project dir."""
     ap = apktool_cmd() + ["d", "-f", "--no-debug-info"]
-    # Skipping smali is the single biggest saving in the whole pipeline and it is
-    # free: apktool records the source APK in apktool.yml and copies the original
-    # classes*.dex back on build, byte for byte. This tool never edits code, so
-    # the smali tree is ~50s of disassembly nobody reads. `--with-sources` gets it
-    # back for the cases that do want it.
     if not getattr(args, "with_sources", False):
         ap.append("-s")
-    if args.framework:
+    if getattr(args, "framework", None):
         ap += ["-p", args.framework]
-    run(ap + [args.apk, "-o", out], quiet=args.quiet)
+    run(ap + [apk, "-o", out], quiet=getattr(args, "quiet", False))
+
+
+def cmd_decode(args):
+    out = args.out or (Path(args.apk).stem + "-decoded")
+    kind = apk_layout(args.apk)
+    if kind == "aab":
+        exe = shutil.which("bundletool") or os.environ.get("AQLAB_BUNDLETOOL")
+        if not exe or not Path(exe).exists():
+            raise Fail(
+                "this is an AAB (app bundle), not an installable APK - apktool cannot "
+                "open it. Convert it first: bundletool build-apks --bundle=<aab> "
+                "--output=<x.apks> --mode=universal, then decode the extracted "
+                "universal.apk. (install bundletool or set AQLAB_BUNDLETOOL to point at it)")
+        run([exe, "build-apks", f"--bundle={args.apk}",
+             f"--output={out}.apks", "--mode=universal", "--overwrite"],
+            quiet=args.quiet)
+        raise Fail(f"converted to {out}.apks - decode its universal.apk next")
+    if kind == "xapk":
+        parts = split_parts(args.apk)
+        if args.split:
+            want = [p for p in parts if args.split in p[0] or p[1] == args.split]
+            if not want:
+                raise Fail(f"no split matching '{args.split}' - has: "
+                           + ", ".join(l for l, _ in parts))
+            label, member = want[0]
+            tmp = Path(out).with_suffix(".part.apk")
+            extract_split(args.apk, member, tmp)
+            decode_one(str(tmp), out, args)
+            print(f"[DONE] decoded split '{label}' -> {out}")
+            return 0
+        # The default is every split, each into its own dir: a split APK is not
+        # a full app and no single one of them is a correct "the app" answer.
+        base_out = Path(out)
+        made = []
+        for label, member in parts:
+            if label == "base":
+                sub = base_out
+            elif len(parts) == 1:
+                # A lone part is the whole of this container (the common
+                # config-split dump), so caller naming one dir must win.
+                sub = base_out
+            else:
+                sub = base_out.parent / f"{base_out.name}-{label}"
+            tmp = base_out.parent / f".{label}.apk"
+            extract_split(args.apk, member, tmp)
+            decode_one(str(tmp), sub, args)
+            tmp.unlink(missing_ok=True)
+            made.append(f"{label} -> {sub}")
+        print(f"[DONE] XAPK with {len(made)} part(s):")
+        for line in made:
+            print("  " + line)
+        return 0
+    if kind != "apk":
+        raise Fail(f"{Path(args.apk).name} is neither an APK, an XAPK nor an AAB")
+    decode_one(args.apk, out, args)
     print(f"[DONE] decoded -> {out}")
     return 0
 
@@ -3336,8 +3443,18 @@ def cmd_all(args):
         print(f"  [{'OK' if not rc else 'WARN'}] {label}")
         return rc, text
 
+    kind = apk_layout(args.apk)
+    if kind == "xapk" and not getattr(args, "split", None):
+        # Every split decodes to its own dir and stage 2 needs exactly one
+        # project, so `all` requires the caller to name the split instead of
+        # silently reading whichever decoded last.
+        raise Fail("XAPK input: pass --split <name> so the pipeline has one project "
+                   "(see `aqlab decode <xapk>` for the part names)")
+    if kind == "aab":
+        raise Fail("AAB input: convert to a universal APK first (see `aqlab decode`)")
     stage("decode", lambda: cmd_decode(argparse.Namespace(
         apk=args.apk, out=proj, framework=args.framework, quiet=args.quiet,
+        split=getattr(args, "split", None),
         with_sources=getattr(args, "with_sources", False))))
     _, rtl_out = stage("rtl", lambda: cmd_rtl(argparse.Namespace(
         proj=proj, dry_run=False, quiet=args.quiet,
@@ -3357,7 +3474,10 @@ def cmd_all(args):
         m.group(1) for m in re.finditer(r"^\s*(?:warn|error)\s+\[(\w+)\]", lint_out, re.M))
     # print the artifact `build` actually produced: apksigner fits the signature
     # onto the aligned copy, so the input APK stays unsigned. Trust its own line.
-    built = re.search(r"built|signed -> (.+?)\s*(?:\(|$)", build_out, re.M)
+    # `build` names the artifact with "<verb> -> <path>" — `signed`, `built`,
+    # or `mid = None` in --dry-run style runs. Reading only `signed` reported
+    # `None` for every unsigned pipeline, which is most of them.
+    built = re.search(r"(?:signed|built) -> (.+?)\s*(?:\(|$)", build_out, re.M)
     print("[DONE] aqlab all")
     print(f"  changes : {migrated.group(1) if migrated else '0'} file(s) migrated")
     print("  lint    : " + (f"{counts.group(1)} error(s), {counts.group(2)} warning(s)"
@@ -3417,6 +3537,8 @@ def build_parser():
     s.add_argument("--with-sources", action="store_true",
                    help="also disassemble smali/ (~5x slower; only needed if you "
                         "intend to edit code — aqlab itself never does)")
+    s.add_argument("--split", help="XAPK only: decode just one part (name or "
+                   "split_config.*.apk); default decodes them all")
     common(s)
     s.set_defaults(func=cmd_decode)
 
@@ -3506,6 +3628,8 @@ def build_parser():
     s.add_argument("--with-sources", action="store_true",
                    help="also disassemble smali/ (~5x slower; only needed if you "
                         "intend to edit code — aqlab itself never does)")
+    s.add_argument("--split", help="XAPK only: which part to pipeline (qualifier "
+                   "like `ar`/`arm64_v8a`, or the split file name)")
     common(s)
     s.set_defaults(func=cmd_all)
     return p
