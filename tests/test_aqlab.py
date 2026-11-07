@@ -2854,7 +2854,7 @@ def test_all_pipeline_summary():
                                 out="demo-ar.apk", tsv=None, locale="ar",
                                 verbose=False, quiet=True, ks=None, ks_pass="",
                                 ks_alias=None, framework=None, force_min_sdk=False,
-                                with_sources=False)
+                                with_sources=False, report="")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
             rc = A.cmd_all(ns)
@@ -2866,10 +2866,12 @@ def test_all_pipeline_summary():
     check("all: every stage runs, in order",
           [c[0] for c in calls] == ["decode", "rtl", "lint", "build"])
     # `decode` receives the project dir as `out` and no `proj`; `build` takes both
-    check("all: the project dir is derived from the APK stem",
-          [c[1] for c in calls[1:]] == ["demo-decoded"] * 3
-          and calls[0][2] == "demo-decoded"
-          and calls[3][2] == "demo-ar.apk")
+    # The tree is a fresh temp dir now (the pipeline deletes it on the way
+    # out), so the check is that every stage got the *same* one, not a stem.
+    check("all: every stage shares one project dir",
+          len({c[1] for c in calls[1:]}) == 1
+          and calls[0][2] == calls[1][1]
+          and calls[3][2] == "demo-ar.apk", str(calls))
     check("all: per-rule counts are aggregated and sorted",
           "RtlRtl=1 RtlSymmetry=2" in out)
     check("all: the migrated count comes from rtl's own line",
@@ -2885,7 +2887,7 @@ def test_all_pipeline_summary():
                                      out=None, tsv=None, locale="ar",
                                      verbose=False, quiet=True, ks=None, ks_pass="",
                                      ks_alias=None, framework=None, force_min_sdk=False,
-                                     with_sources=False))
+                                     with_sources=False, report=""))
         raised = False
     except A.Fail:
         raised = True
@@ -2901,13 +2903,103 @@ def test_all_pipeline_summary():
                                              locale="ar", verbose=False, quiet=True,
                                              ks=None, ks_pass="", ks_alias=None,
                                              framework=None, force_min_sdk=False,
-                                             with_sources=False, split=None))
+                                             with_sources=False, split=None,
+                                             report=""))
                 aborted = False
             except A.Fail as e:
                 aborted = "boom" in str(e)
     finally:
         A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build = orig
     check("all: a failed stage aborts the pipeline", aborted)
+
+
+def test_all_report_and_cleanup():
+    """`all --report` writes the lint report, and a pipeline that made its own
+    decoded tree deletes it.
+
+    Measured on the real APK: `all` decoded into `<stem>-decoded` beside the
+    input and left it there, so one command produced an APK, a report and 100 MB
+    of aapt output the caller never asked for. The report is also the one file
+    worth keeping, so it must land outside that tree (default: beside the APK).
+    """
+    seen, err = {}, io.StringIO()
+    rep_path = Path(tempfile.mkdtemp()) / "r.json"
+
+    def lint(a):
+        # the pipeline's own report settings, as the parser hands them over
+        seen["report"], seen["out"], seen["name"] = a.report, a.out, a.report_name
+        Path(a.out).write_text("{}", encoding="utf-8") if a.report else None
+        print(f"[DONE] report: {a.out}" if a.report else "")
+        print("[OK] 0 error(s), 0 warning(s)")
+        return 0
+
+    orig = (A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build)
+    made = []
+
+    def dec(a):
+        # a real decode creates the dir; the cleanup must follow *that*
+        Path(a.out).mkdir(parents=True, exist_ok=True)
+        (Path(a.out) / "AndroidManifest.xml").write_text("x", encoding="utf-8")
+        made.append(a.out)
+        return 0
+    A.cmd_decode = dec
+    A.cmd_rtl = lambda a: (print("[DONE] 0 file(s) updated"), 0)[1]
+    A.cmd_lint = lint
+    A.cmd_build = lambda a: (print("[DONE] built -> x-aligned.apk"), 0)[1]
+    apk = _tmp_zip("demo.apk", {"AndroidManifest.xml": b"x"})
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            A.cmd_all(argparse.Namespace(apk=str(apk), out="o.apk", tsv=None,
+                                         locale="ar", verbose=False, quiet=True,
+                                         ks=None, ks_pass="", ks_alias=None,
+                                         framework=None, force_min_sdk=False,
+                                         with_sources=False, split=None,
+                                         report="json", report_out=str(rep_path)))
+        out = buf.getvalue()
+    finally:
+        A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build = orig
+
+    check("all: --report is threaded into lint", seen.get("report") == "json", str(seen))
+    # measured: the report titled itself after the temp tree (`aqlab-all-p7052512`)
+    check("all: the report names the APK, not the temp tree",
+          seen.get("name") == "demo", str(seen))
+    check("all: a report path is passed through",
+          str(rep_path) in out and rep_path.exists(), out)
+    check("all: the summary names the report line", "report  :" in out, out)
+    check("all: the tree it decoded is deleted afterwards",
+          made and not Path(made[0]).exists(), str(made))
+    check("all: the summary admits the tree is gone",
+          "kept    : no" in out, out)
+
+    # A tree the caller already had is not the pipeline's to delete: a decoded
+    # project may hold edits, and `all` only ever adds to it.
+    cwd0 = os.getcwd()
+    os.chdir(Path(apk).parent)
+    proj_dir = Path("demo-decoded")
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    (proj_dir / "keep.xml").write_text("x", encoding="utf-8")
+    A.cmd_decode = lambda a: 0
+    A.cmd_rtl = lambda a: (print("[DONE] 0 file(s) updated"), 0)[1]
+    A.cmd_lint = lambda a: (print("[OK] 0 error(s), 0 warning(s)"), 0)[1]
+    A.cmd_build = lambda a: (print("[DONE] built -> x-aligned.apk"), 0)[1]
+    try:
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                A.cmd_all(argparse.Namespace(apk=str(apk), out="o.apk", tsv=None,
+                                             locale="ar", verbose=False, quiet=True,
+                                             ks=None, ks_pass="", ks_alias=None,
+                                             framework=None, force_min_sdk=False,
+                                             with_sources=False, split=None,
+                                             report="", report_out=None))
+        finally:
+            pass
+    finally:
+        os.chdir(cwd0)
+        A.cmd_decode, A.cmd_rtl, A.cmd_lint, A.cmd_build = orig
+        shutil.rmtree(proj_dir, ignore_errors=True)
+    check("all: a pre-existing project dir survives",
+          (Path(apk).parent / "demo-decoded" / "keep.xml").exists())
 
 
 def test_all_unsigned_output_line():
@@ -3226,7 +3318,8 @@ def test_decode_refuses_container_ambiguity():
                                          quiet=True, with_sources=False,
                                          split=None, locale="ar", ts=None,
                                          tsv=None, ks=None, ks_pass=None,
-                                         ks_alias=None, verbose=False))
+                                         ks_alias=None, verbose=False,
+                                         report="", report_out=None))
     except A.Fail as e:
         check("all on an xapk refuses without --split", "--split" in str(e), str(e))
     else:
@@ -3720,6 +3813,7 @@ def main():
         test_bad_path_guard(tmp)
         test_migrate_prefilter()
         test_all_pipeline_summary()
+        test_all_report_and_cleanup()
         test_decode_sources_flag()
         test_apk_layout()
         test_split_parts_order()

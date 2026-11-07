@@ -161,7 +161,7 @@ Or all of it at once — decode, migrate, import the table, lint, rebuild and si
 one summary block, and the run stops at the first stage that fails:
 
 ```sh
-aqlab all app.apk -o app-ar.apk --tsv ar.tsv --ks release.keystore --ks-alias release
+aqlab all app.apk -o app-ar.apk --tsv ar.tsv --ks release.keystore --ks-alias release     --report json
 ```
 
 ```
@@ -175,7 +175,13 @@ aqlab all app.apk -o app-ar.apk --tsv ar.tsv --ks release.keystore --ks-alias re
   lint    : 0 error(s), 70 warning(s) RtlSymmetry=37 RtlHardcoded=2
   output  : app-ar-aligned.apk
   project : app-decoded
+  report  : app/aqlab-report.json
 ```
+
+`all` decodes into a temporary directory and deletes it on the way out — an
+existing `app-decoded/` beside the APK is left alone, and a report written by
+`--report` defaults to `app/aqlab-report.json` beside the APK, not inside the
+tree that is about to go.
 
 Lint errors do not stop the build — an APK whose strings are not translated yet
 still assembles — but the summary counts them and `all` exits non-zero.

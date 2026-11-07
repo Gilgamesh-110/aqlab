@@ -35,6 +35,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -3132,7 +3133,8 @@ def cmd_lint(args):
     fmt = getattr(args, "report", None)
     if fmt:
         rep = build_report(proj, args.locale, cov, covered, len(src), per_file,
-                           issues, errors, gate_failed)
+                           issues, errors, gate_failed,
+                           name=getattr(args, "report_name", None))
         write_report(fmt, getattr(args, "out", None), rep, proj)
     return 1 if (errors or gate_failed) else 0
 
@@ -3141,7 +3143,7 @@ REPORT_SCHEMA = 1
 
 
 def build_report(proj, locale, cov, covered, total, per_file, issues, errors,
-                 gate_failed=False, command="lint"):
+                 gate_failed=False, command="lint", name=None):
     """The lint result as plain data, so `--report` has one shape to emit.
 
     Rule ids come from the `add()` calls. An issue added without one is not a
@@ -3162,7 +3164,9 @@ def build_report(proj, locale, cov, covered, total, per_file, issues, errors,
         # which subcommand produced the file: one schema, three producers, and
         # a consumer has to be able to tell a lint result from a translate one
         "command": command,
-        "project": proj.name,
+        # `name` exists for `all`, whose tree is a temp dir: a report titled
+        # `aqlab-all-p7052512` names nothing a human can find again.
+        "project": name or proj.name,
         "locale": locale,
         "coverage": {"covered": covered, "total": total,
                      "percent": round(cov, 2),
@@ -3226,6 +3230,10 @@ def write_report(fmt, out, rep, proj):
     else:
         raise Fail(f"unknown --report format `{fmt}` (json|html)")
     path = Path(out) if out else proj / f"aqlab-report{suffix}"
+    # `all --report` defaults the path to a `<stem>/` dir that nothing has made
+    # yet — measured on CA_v6.apk: FileNotFoundError after a 10 s pipeline, so
+    # the report was the one stage that could throw away a finished build.
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     print(f"[DONE] report: {path}")
     return path
@@ -3649,7 +3657,25 @@ def cmd_all(args):
     """
     if not args.out:
         raise Fail("aqlab all needs -o/--out <output.apk> — the summary names the artifact")
+    # `all` is one command, so it cleans up after itself: a decoded tree left
+    # beside the APK is 100 MB of aapt output the caller never asked for. It
+    # only owns the tree it created — a directory that was already there (a
+    # previous run the caller may still be editing) is never deleted.
     proj, out = Path(args.apk).stem + "-decoded", args.out
+    if Path(proj).exists():
+        keep = True
+    else:
+        proj = tempfile.mkdtemp(prefix="aqlab-all-")
+        keep = False
+    try:
+        return _all_stages(args, proj, out)
+    finally:
+        if not keep:
+            shutil.rmtree(proj, ignore_errors=True)
+
+
+def _all_stages(args, proj, out):
+    """The pipeline proper; `cmd_all` owns the tree lifetime around it."""
 
     def stage(label, fn):
         """Run one stage, hold its output, and keep every line for the summary.
@@ -3690,7 +3716,18 @@ def cmd_all(args):
         stage("apply", lambda: cmd_apply(argparse.Namespace(
             proj=proj, tsv=args.tsv, locale=args.locale)))
     rc, lint_out = stage("lint", lambda: cmd_lint(argparse.Namespace(
-        proj=proj, locale=args.locale, verbose=args.verbose)))
+        proj=proj, locale=args.locale, verbose=args.verbose,
+        # a report here is the pipeline's own default output: `all` already
+        # writes one artifact, and the second file is the evidence for it
+        report=args.report,
+        # default beside the APK: the project may be wiped right after this
+        # stage, and a report written inside it would go with it
+        out=(getattr(args, "report_out", None)
+             or (Path(args.apk).resolve().parent / Path(args.apk).stem
+                 / f"aqlab-report.{args.report}") if args.report else None),
+        # the tree is a temp dir named after nothing the user typed, so the
+        # report has to name the APK it belongs to, not `aqlab-all-p7052512`
+        report_name=Path(args.apk).stem)))
     _, build_out = stage("build", lambda: cmd_build(argparse.Namespace(
         proj=proj, out=out, ks=args.ks, ks_pass=args.ks_pass,
         ks_alias=args.ks_alias, quiet=args.quiet)))
@@ -3712,6 +3749,14 @@ def cmd_all(args):
           + "".join(f" {n}={c}" for n, c in sorted(per_rule.items())))
     print(f"  output  : {built.group(1) if built else out}")
     print(f"  project : {proj}")
+    # A project the pipeline owns is deleted on the way out, so the summary
+    # would name a directory that no longer exists. Say which one it is.
+    gone = re.search(r"aqlab-all-[\w]+$", str(proj))
+    if gone:
+        print("  kept    : no — decoded tree removed (run `aqlab decode` to keep one)")
+    rep = re.search(r"\[DONE\] report: (.+\.[a-z]+)\s*$", lint_out, re.M)
+    if rep:
+        print(f"  report  : {rep.group(1).strip()}")
     return rc
 
 
@@ -3871,6 +3916,11 @@ def build_parser():
                         "intend to edit code — aqlab itself never does)")
     s.add_argument("--split", help="XAPK only: which part to pipeline (qualifier "
                    "like `ar`/`arm64_v8a`, or the split file name)")
+    s.add_argument("--report", choices=("json", "html"),
+                   help="also write the lint report (the evidence for the summary)")
+    s.add_argument("--report-out", metavar="PATH",
+                   help="report path (default: beside the input APK, so a cleaned "
+                        "up project never eats it)")
     common(s)
     s.set_defaults(func=cmd_all)
     return p
