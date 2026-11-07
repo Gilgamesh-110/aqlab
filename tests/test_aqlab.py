@@ -1794,6 +1794,65 @@ def test_lint_fix_gravity(tmp):
     check("gravity fix idempotent", f.read_text(encoding="utf-8") == after, after)
     check("second pass fixes nothing", "fixed:" not in out2.getvalue(), out2.getvalue()[:200])
 
+def test_pin_drop_removes_every_pin(tmp):
+    """`fix_pin_local` dropped only one pin per row; a row carried two.
+
+    `direction_pins` reports the first pin it finds on a row and breaks, so
+    `layoutDirection="ltr"` shadowed a `textDirection="ltr"` beside it. The
+    fixer removed the layout pin, the text pin survived, the row stayed
+    reported and the next `--fix` edited the same file again — the fixer
+    contradicted its own idempotence.
+
+    Two more mismatches between the reporter's pattern and the fixer's, both
+    found by probing rather than by reading: the reporter accepts `app:` and
+    either quote char, the fixer accepted neither. An `app:layoutDirection`
+    row was left with a bare `app:` where the value used to be — broken XML —
+    and a single-quoted row was reported but unreachable.
+    """
+    root = Path(tmp) / "pindrop"
+    res = root / "res"
+    layout = res / "layout"
+    layout.mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+    ns = ('<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"'
+          ' xmlns:app="http://schemas.android.com/apk/res-auto"')
+    f = layout / "a.xml"
+
+    # Both pins on one row: the report names the row once, the fix must clear it.
+    f.write_text(ns + ' android:layoutDirection="ltr" android:textDirection="ltr"'
+                 ' android:paddingLeft="4dp"/>', encoding="utf-8")
+    check("row with two pins is a finding",
+          [g[0] for g in A.direction_pins(root)] == ["layoutDirection"],
+          str(A.direction_pins(root)))
+    check("fixer drops both pins", A.fix_pin_local(root) == 1, "")
+    after = f.read_text(encoding="utf-8")
+    check("no pin left behind", "Direction=" not in after, after)
+    check("physical attr migrated", 'android:paddingStart="4dp"' in after, after)
+    check("second pass is a no-op", A.fix_pin_local(root) == 0, "")
+
+    # `app:` prefix must be dropped whole, not leave a dangling `app:`.
+    f.write_text(ns + ' app:layoutDirection="ltr" android:paddingLeft="4dp"/>',
+                 encoding="utf-8")
+    check("app: pin is a finding", len(A.direction_pins(root)) == 1,
+          str(A.direction_pins(root)))
+    A.fix_pin_local(root)
+    after = f.read_text(encoding="utf-8")
+    check("app: pin removed whole", "app:" not in after.split("xmlns:app=")[1],
+          after)
+    check("app: fix is idempotent", A.fix_pin_local(root) == 0, "")
+
+    # Single quotes: the reporter accepts them, so the fixer must too.
+    f.write_text(ns + " android:textDirection='ltr' android:paddingLeft='4dp'/>",
+                 encoding="utf-8")
+    check("single-quoted text pin is a finding", len(A.direction_pins(root)) == 1,
+          str(A.direction_pins(root)))
+    check("fixer reaches a single-quoted pin", A.fix_pin_local(root) == 1, "")
+    check("single-quoted pin gone", "Direction=" not in f.read_text(encoding="utf-8"),
+          f.read_text(encoding="utf-8"))
+
+
 def test_direction_pins(tmp):
     """DirectionPins: a pin over physical attrs keeps a row LTR in Arabic.
 
@@ -2524,6 +2583,7 @@ def main():
         test_pin_fix_skips_a_row_it_already_passed(tmp)
         test_pin_nested_include(tmp)
         test_lint_fix_pin_local(tmp)
+        test_pin_drop_removes_every_pin(tmp)
         test_direction_pins(tmp)
         test_rtl(proj)
         test_lint(proj)

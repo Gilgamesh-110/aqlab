@@ -2262,8 +2262,13 @@ def cmd_lint(args):
         else:
             tag_, val = rest
             add("warn", f"{where}:<{tag_}>",
+                # `ltr` is repairable by `fix_pin_local` and `rtl` is left
+                # alone, exactly like the `layoutDirection` message above —
+                # the tip promised a repair only when there is one.
                 f'textDirection="{val}" pins the text of a row that already sets '
-                f'left/right attrs — it stays {val} in {args.locale}')
+                f'left/right attrs — it stays {val} in {args.locale}'
+                + ('; `aqlab lint --fix` drops the pin and migrates the row'
+                   if val == 'ltr' else ''))
 
     # A `ldrtl` folder that mirrors nothing is not a translation problem, so it
     # is reported without the locale gate above — it costs the same in any RTL
@@ -2381,8 +2386,13 @@ ANY_DIR_RE = re.compile(r'(?<![\w.-])(?:android:|app:)?(?:layout|text)Direction\
 # wrong decision, not a design — drop the pin and let the row follow the locale,
 # migrating its physical attrs so the row is still correct in both directions.
 # `rtl` is a deliberate mirror and is left to the author.
+# Both pins, in one pattern: `direction_pins` reports only the first pin it
+# finds on a row (it `break`s after the match), so a row carrying
+# `layoutDirection="ltr"` *and* `textDirection="ltr"` was reported once and
+# repaired once — the text pin survived, the row stayed reported, and the next
+# `--fix` edited it again. Dropping both is what the report promised.
 LOCAL_PIN_RE = re.compile(
-    r'(?<![\w.-])(?:android:)?layoutDirection\s*=\s*"ltr"')
+    r'(?<![\w.-])(?:android:|app:)?(?:layout|text)Direction\s*=\s*[\x22\x27]ltr[\x22\x27]')
 
 
 def fix_pin_local(proj, dry=False):

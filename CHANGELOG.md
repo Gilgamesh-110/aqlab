@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`fix_pin_local` dropped one direction pin per row, and reached only the cheap spelling.** `direction_pins` reports the first pin it finds on a row and `break`s, so `layoutDirection="ltr"` shadowed a `textDirection="ltr"` beside it; the fixer removed the first, the second survived, the row stayed reported and the next `--fix` edited the same file again — contradicting its own idempotence. Two more mismatches between the reporter's pattern and the fixer's, both found by probing: the reporter accepts `app:` and either quote char, the fixer accepted neither, so an `app:layoutDirection` row came back as `<... app: android:orientation=...>` — a dangling prefix, broken XML — and a single-quoted row was reported but unreachable. `LOCAL_PIN_RE` now matches both attribute names, both prefixes and both quote characters. Also: the `textDirection` warning never said `--fix` would repair an `ltr` pin it already repaired; it carries the tip now. Tests 360 → 371; mutation-killed four ways (both-pins, text-name, `app:` prefix, quote char).
 - **`hardcoded_gravity` and both `lint --fix` writers read only double quotes.**
   Android accepts either quote character on an attribute value, and round 14
   widened `rewrite_xml_attrs`, `symmetry_problems` and the pin reader to match,
