@@ -1657,11 +1657,35 @@ def test_lint_fix(tmp):
     check("idempotent", layout.read_text(encoding="utf-8") == after, after)
     check("second pass reports nothing", "fixed:" not in out2.getvalue(), out2.getvalue()[:200])
 
+    # One element, two holes, one pass: `symmetric_fix` reads the attribute set
+    # once, so calling it per element repaired paddingStart/End and left the
+    # margin hole reported — a `--fix` that needs a second run to finish contradicts
+    # its own idempotence check, and the second run edits the file again.
+    two_path = layout.parent / "two_holes.xml"
+    two_path.write_text(
+        XML_HEAD + '<TextView android:paddingStart="4dp"'
+        ' android:layout_marginStart="8dp" />', encoding="utf-8")
+    holes = A.symmetry_problems(root)
+    # main.xml still holds its physical-only ImageButton, which the fixer
+    # deliberately leaves to `aqlab rtl`.
+    mine = [h for h in holes if h[0].endswith("two_holes.xml")]
+    check("both holes reported", len(mine) == 2, str(holes))
+    wrote = A.fix_symmetry(root, dry=False)
+    check("one pass repairs the element", wrote == 1, str(wrote))
+    two = two_path.read_text(encoding="utf-8")
+    check("both partners written", 'android:paddingEnd="4dp"' in two
+          and 'android:layout_marginEnd="8dp"' in two, two)
+    check("no hole survives in the swept element",
+          not [h for h in A.symmetry_problems(root) if h[0].endswith("two_holes.xml")],
+          str(A.symmetry_problems(root)))
+    check("second pass writes nothing", A.fix_symmetry(root, dry=False) == 0, "")
+
     remaining = A.symmetry_problems(root)
     check("only the physical hole left", len(remaining) == 1
           and remaining[0][2] == "paddingLeft", str(remaining))
 
 
+XML_HEAD = '<?xml version="1.0" encoding="utf-8"?>' + chr(10)
 HEAD = '<?xml version="1.0" encoding="utf-8"?>\n<resources>'
 
 

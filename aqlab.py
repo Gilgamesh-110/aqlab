@@ -2586,8 +2586,8 @@ def fix_symmetry(proj, dry=False):
             txt = f.read_text(encoding="utf-8", newline="")
         except OSError:
             continue
-        # Count only elements this file was reported for, so a second run over an
-        # already-fixed file reports 0 instead of re-finding nothing.
+        # Count only elements this file was reported for — each finding names one
+        # hole, so the same tag may sit in `wanted` twice.
         todo = list(wanted)
         done = 0
 
@@ -2600,9 +2600,10 @@ def fix_symmetry(proj, dry=False):
                     r'\b(?:android:)?%s\s*=' % have_a, m.group(2)):
                 return m.group(0)
             todo.pop(0)
-            body = symmetric_fix(m.group(2))
-            if body == m.group(2):
+            fixed = symmetric_fix(m.group(2))
+            if fixed == m.group(2):
                 return m.group(0)
+            body = fixed
             done += 1
             # Rebuild from the body only: the tag's opening and closing delimiters
             # are kept exactly as apktool wrote them, so a self-closing `/>` stays
