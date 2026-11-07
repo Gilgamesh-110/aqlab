@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A single-quoted attribute value is no longer invisible.** XML allows either
+  quote character on an attribute value and aapt normalises both, so
+  `android:paddingLeft='4dp'` is valid Android — but every reader in the tool
+  assumed `"`. `aqlab rtl` skipped it, `RtlSymmetry` could not see the side at
+  all (so it reported nothing rather than reporting a false pair), and the
+  direction-pin reader missed a single-quoted `layoutDirection`. All four now
+  accept both quotes. Measured on the real APK first: it carries no single
+  quotes, so this was a silent hole, not a false positive — the result there is
+  unchanged at 41 warnings / 1 error and the same 2 planned `--fix` rewrites.
 - **`lint --fix` no longer rewrites every line ending in the file.** apktool
   writes CRLF and Python text mode turns each one into LF on write-back, so a
   one-attribute fix produced a whole-file diff and the next pass could no

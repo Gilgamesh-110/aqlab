@@ -120,7 +120,10 @@ def map_theme_refs(val):
 # An opening element tag, attribute values may contain `>` so quotes are matched.
 RE_ELEMENT = re.compile(r"<([A-Za-z_][\w.:-]*)((?:[^<>\"']|\"[^\"]*\"|'[^']*')*?)(/?)>",
                         re.DOTALL)
-RE_ATTR = re.compile(r'([A-Za-z_][\w.:-]*)\s*=\s*"([^"]*)"')
+# Android accepts either quote character on an attribute value and aapt normalises
+# both, so a single-quoted `paddingLeft` is the same defect as a double-quoted one.
+# Backreference `\2` keeps the value from ending on the wrong quote.
+RE_ATTR = re.compile(r"([A-Za-z_][\w.:-]*)\s*=\s*[\x22\x27](.*?)[\x22\x27]", re.DOTALL)
 
 # Cheap pre-filter: a tag can only be migrated if one of the names the tables
 # above know about actually appears in it. Almost every tag in a real tree
@@ -1476,8 +1479,8 @@ def direction_pins(proj):
     # The tag is found by `iter_start_tags`, not by a regex: a layout holds
     # several siblings that open with the same tag, and one regex match used to
     # swallow the next element's attributes, so a pin could vanish.
-    pin_re = re.compile(r'(?<![\w.-])(?:android:|app:)?layoutDirection\s*=\s*"(?!locale)(ltr|rtl)"')
-    txt_re = re.compile(r'(?<![\w.-])(?:android:|app:)?textDirection\s*=\s*"(?!locale)(ltr|rtl)"')
+    pin_re = re.compile(r'(?<![\w.-])(?:android:|app:)?layoutDirection\s*=\s*[\x22\x27](?!locale)(ltr|rtl)[\x22\x27]')
+    txt_re = re.compile(r'(?<![\w.-])(?:android:|app:)?textDirection\s*=\s*[\x22\x27](?!locale)(ltr|rtl)[\x22\x27]')
     any_dir_re = re.compile(r'(?<![\w.-])(?:android:|app:)?(?:layout|text)Direction\s*=')
     phys_re = re.compile(r"(?<![\w.-])(?:android|app):(%s)\s*=" % "|".join(ATTR_RENAME))
 
@@ -1709,7 +1712,10 @@ def symmetry_problems(proj):
         for m in elem.finditer(txt):
             tag, body = m.group(1), m.group(2)
             have = {}
-            for a in re.finditer(r'\b(?:android:)?([\w.]+)\s*=\s*"([^"]*)"', body):
+            # Both quote characters: Android accepts either, and `aqlab rtl` now
+            # migrates a single-quoted side, so the two must agree on what they see.
+            for a in re.finditer(
+                    r"\b(?:android:)?([\w.]+)\s*=\s*[\x22\x27](.*?)[\x22\x27]", body):
                 have[a.group(1)] = a.group(2)
             for left, right, _kind in SYMMETRY_PAIRS:
                 # both spellings of the same pair covered -> nothing to say

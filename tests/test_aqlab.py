@@ -1175,6 +1175,55 @@ def test_symmetry_check(tmp):
           text[:500])
 
 
+
+def test_single_quoted_attributes(tmp):
+    """A single-quoted attribute value is valid Android XML and was invisible.
+
+    Measured on the real APK first: it carries no single quotes, so this was a
+    silent hole rather than a false positive. XML allows either quote character
+    on an attribute value and aapt normalises both, so a layout copied out of a
+    blog post with `paddingLeft='4dp'` migrated nothing, and lint then reported
+    nothing either — the attribute never entered the dict the symmetry check
+    reads. Both sides have to agree, so this asserts migration, the symmetry
+    reader and the pin reader on the same fixture.
+    """
+    q = chr(39)
+    text = ('<TextView android:paddingLeft=' + q + '4dp' + q
+            + ' android:layout_marginRight="8dp"/>')
+    out, n = A.rewrite_xml_attrs(text)
+    check("single-quoted paddingLeft is migrated", 'android:paddingStart="4dp"' in out, out)
+    check("single-quoted and double-quoted count as two edits", n == 2, str(n))
+
+    # A tag carrying only single quotes must still be seen by the machinery.
+    mixed = ('<LinearLayout android:paddingLeft=' + q + '2dp' + q
+             + ' android:paddingRight=' + q + '2dp' + q
+             + ' android:gravity=' + q + 'left' + q + '/>')
+    out2, n2 = A.rewrite_xml_attrs(mixed)
+    check("a fully single-quoted tag is not skipped",
+          'android:paddingStart="2dp"' in out2 and 'gravity="start"' in out2, out2)
+
+    root = Path(tmp) / "sq"
+    layout = root / "res" / "layout"
+    layout.mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="a"/></manifest>', encoding="utf-8")
+    # one side single-quoted, the partner missing: the same finding as double quotes
+    (layout / "a.xml").write_text(
+        "<ImageView android:paddingLeft=" + q + "4dp" + q + "/>", encoding="utf-8")
+    got = A.symmetry_problems(root)
+    check("symmetry sees a single-quoted side",
+          [(a, b) for _, _, a, b, _ in got] == [("paddingLeft", "paddingRight")], str(got))
+
+    # and the pin reader: a single-quoted layoutDirection still pins its row.
+    (layout / "a.xml").write_text(
+        "<LinearLayout android:layoutDirection=" + q + "ltr" + q
+        + " android:paddingLeft=" + q + "4dp" + q + "/>", encoding="utf-8")
+    pins = [k for k, *_ in A.direction_pins(root)]
+    check("pin reader sees a single-quoted layoutDirection",
+          pins == ["layoutDirection"], str(pins))
+
+
 def test_rtl_drawable_dirs(tmp):
     """ldrtl folders that mirror nothing: empty, or a copy of the LTR file.
 
@@ -2174,6 +2223,7 @@ def main():
         test_diff_between_apks(tmp)
         test_xliff_wrapping(tmp)
         test_symmetry_check(tmp)
+        test_single_quoted_attributes(tmp)
         test_rtl_drawable_dirs(tmp)
         test_hardcoded_gravity(tmp)
         test_gravity_compound_token(tmp)
