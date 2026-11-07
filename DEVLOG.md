@@ -108,3 +108,41 @@ Mutations caught: `keep` hard-wired to True, and the old `is_dir()` probe.
 
 Tests 548->552. Real APK: 552 green, `aqlab all` on the XAPK split path
 produces a signed 84 MB APK with Arabic resources, nothing left in %TEMP%.
+
+## ROUND 38 — B1: `--jobs N` reaches every layout sweep, and the parity is asserted
+
+A1 shipped with `--jobs` wired to two passes (gravity, and a symmetry step that
+did not exist: the flag reached a function that took no `jobs` argument, so
+`lint --jobs 4` would have raised). The round put every sweep on one helper.
+
+`_spread_pairs` and `text_sources` are now the only way a sweep meets a pool:
+the parent reads each file once and hands the child only text, the child runs
+the same body the serial path runs, `imap` keeps submission order, and the floor
+stays at eight files (a `spawn` worker is ~50ms on Windows; below eight the pool
+costs more than the pass). Five sweeps use it: symmetry, gravity, direction pins,
+RTL literals, text-like vectors. `direction_pins` moved its four regexes to
+module level — they were compiled per call inside the function, so the pool would
+have shipped them to every worker.
+
+`rtl_enabled` could not be spread as it stood: `declared_direction_values` (a
+`values/attrs.xml` read) and the manifest flip are project-wide gates, and
+without them a declared enum came back as a finding — caught by the existing
+`a declared enum value is never a finding` check before any new test ran. The
+file walk moved into `rtl_enabled_in(txt, rel, declared, supports_rtl)` and both
+paths pass the same gates.
+
+`rtl_drawable_dirs` takes `jobs` and ignores it, with a comment saying so: one
+`read_bytes` per file against a name it already has is not worth a worker.
+`gcd_gravity` dead code from the old inline path is gone, and `cmd_lint` now
+defines `jobs` once where it used `args.jobs` per call site.
+
+Tests 552->573 (`test_jobs_parity`: five sweeps x three worker counts against
+the serial list, plus a pool-was-used assertion; 4 spawns for 5 sweeps is the
+eight-file floor, and the test says so). Three mutations caught: helper ignores
+`jobs`, pool reorders the input, serial symmetry list truncated.
+
+Real APK (`C:/tmp/symdec`): `lint --jobs 1|4|8` byte-identical output,
+`scan --jobs 1|4` byte-identical, same 49 symmetry / 2 gravity / 0 pin / 0 RTL
+rows. Timing on this 84 MB project is flat (1.06s serial vs 10.19s at `--jobs 8`)
+— spawn cost dominates 200 small files, which is why the floor and the docs say
+`--jobs` is for big trees, not a default.

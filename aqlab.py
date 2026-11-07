@@ -1819,6 +1819,8 @@ def parse_jobs(value):
 
 
 def scan_project(proj, args):
+    # `--jobs N`: every layout sweep below is a spread of its serial body.
+    jobs = parse_jobs(getattr(args, "jobs", None))
     if not find_default_strings(proj):
         raise Fail("no values/strings.xml — is this a decoded project?")
     res = Path(proj) / "res"
@@ -1838,20 +1840,16 @@ def scan_project(proj, args):
     print(f"  supportsRtl    : {'yes' if rtl_on else 'NO — run `aqlab rtl`'}")
     print(f"  translatable   : {sum(1 for e in entries if e.translatable)}")
     print(f"  legacy L/R     : {lefts} attribute(s) still left/right — run `aqlab rtl`")
-    sym = symmetry_problems(proj)
+    sym = symmetry_problems(proj, jobs)
     if sym:
         print(f"  asymmetric     : {len(sym)} side(s) set without the opposite — "
               f"offsets off-centre when the layout flips")
-    jobs = parse_jobs(getattr(args, "jobs", None))
-    if jobs > 1:
-        grav = gravity_parallel(
-            [(g.relative_to(proj).as_posix(), g.read_text(encoding="utf-8", errors="replace"))
-             for g in gravity_files(proj)], jobs)
-    else:
-        grav = hardcoded_gravity(proj)
+    # `--jobs` only ever spreads the serial passes; the serial pass stays the
+    # one definition of a hit, and `test_jobs_parity` asserts the equality.
+    grav = hardcoded_gravity(proj, jobs)
     if grav:
         print(f"  hardcoded grav : {len(grav)} value(s) pin text to a physical side")
-    pins = direction_pins(proj)
+    pins = direction_pins(proj, jobs)
     for kind, where, *_rest in pins:
         if kind == "supportsRtl":
             print(f"  supportsRtl    : false — Arabic gets the LTR layout; "
@@ -1860,7 +1858,7 @@ def scan_project(proj, args):
             tag_, val = _rest[0], _rest[1]
             print(f"  direction pin  : {where}:<{tag_}> layoutDirection=\"{val}\" on a "
                   f"horizontal row with physical attrs")
-    vec = text_like_vectors(proj)
+    vec = text_like_vectors(proj, jobs)
     if vec:
         print(f"  text vectors   : {len(vec)} — Latin glyphs baked into geometry, check by eye")
         for pth, n, w, h in vec:
@@ -1871,6 +1869,52 @@ def scan_project(proj, args):
                           "translatable": sum(1 for e in entries if e.translatable),
                           "legacyLTR": lefts, "arabic": bool(ar_dirs)}, ensure_ascii=False))
     return 0
+
+
+def _spread_pairs(sources, fn, jobs):
+    """`fn` over pre-read (relative path, text) pairs, rows joined in order.
+
+    One floor for every layout sweep: below eight files a pool costs more than
+    the sweep it would run (spawn is ~50ms a worker on Windows), so a small
+    project stays serial whatever `--jobs` says. Above it, `imap` yields in
+    submission order — that is why the pooled list *is* the serial list, and
+    `test_jobs_parity` asserts it for every sweep.
+    """
+    if jobs <= 1 or len(sources) < 8:
+        return [hit for pair in sources for hit in fn(pair)]
+    ctx = multiprocessing.get_context("spawn")
+    with ctx.Pool(min(jobs, len(sources))) as pool:
+        return [hit for chunk in pool.imap(fn, sources) for hit in chunk]
+
+
+def _pins_chunk(pair):
+    """`pins_in` for one (relative path, text) pair, picklable for `spawn`."""
+    name, txt = pair
+    return pins_in(txt, name)
+
+
+def text_sources(proj, patterns):
+    """(relative path, text) for every file matching `patterns` under res/.
+
+    One reader for every sweep that reaches a pool: the parent holds the disk, a
+    child holds only the strings it was handed, and the order is sorted so the
+    serial pass and the pooled pass see the same list.
+    """
+    res = Path(proj) / "res"
+    if not res.is_dir():
+        return []
+    seen, rows = set(), []
+    for pat in patterns:
+        for f in sorted(res.glob(pat)):
+            if not f.is_file() or f in seen:
+                continue
+            seen.add(f)
+            try:
+                rows.append((f.relative_to(proj).as_posix(),
+                             f.read_text(encoding="utf-8", errors="replace")))
+            except OSError:
+                continue
+    return rows
 
 
 def gravity_parallel(sources, jobs):
@@ -1887,7 +1931,7 @@ def gravity_parallel(sources, jobs):
         return [hit for chunk in pool.imap(_gravity_chunk, sources) for hit in chunk]
 
 
-def text_like_vectors(proj):
+def text_like_vectors(proj, jobs=1):
     """Vector drawables that probably carry baked-in Latin glyphs.
 
     A heuristic, so every signal has to agree before anything is reported — the
@@ -1904,34 +1948,31 @@ def text_like_vectors(proj):
 
     Returns [(path, path_count, width, height)] relative to the project.
     """
-    res = Path(proj) / "res"
-    if not res.is_dir():
+    return _spread_pairs(text_sources(proj, ("drawable*/*.xml",)),
+                         _vectors_chunk, jobs)
+
+
+def _vectors_chunk(pair):
+    """`text_like_vectors` for one (relative path, text) pair.
+
+    Module level and argument-only so a `spawn` pool can pickle it. 12 paths is
+    above every Material icon in a real APK (measured: 2 each) and below what
+    even a short wordmark needs.
+    """
+    name, txt = pair
+    if "<vector" not in txt:
         return []
-    out = []
-    # Lettering is many separate contours; an icon is a handful. 12 is above
-    # every Material icon in a real APK (measured: 2 paths each) and below what
-    # even a short wordmark needs.
-    MIN_PATHS = 12
-    for f in sorted(res.glob("drawable*/*.xml")):
-        try:
-            txt = f.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if "<vector" not in txt:
-            continue
-        if "autoMirrored" in txt and 'autoMirrored="true"' in txt:
-            continue
-        n = txt.count("<path")
-        if n < MIN_PATHS:
-            continue
-        w = re.search(r'android:width="([0-9.]+)dip"', txt)
-        h = re.search(r'android:height="([0-9.]+)dip"', txt)
-        out.append((f.relative_to(proj).as_posix(), n,
-                    w.group(1) if w else "?", h.group(1) if h else "?"))
-    return out
+    if "autoMirrored" in txt and 'autoMirrored="true"' in txt:
+        return []
+    n = txt.count("<path")
+    if n < 12:
+        return []
+    w = re.search(r'android:width="([0-9.]+)dip"', txt)
+    h = re.search(r'android:height="([0-9.]+)dip"', txt)
+    return [(name, n, w.group(1) if w else "?", h.group(1) if h else "?")]
 
 
-def hardcoded_gravity(proj):
+def hardcoded_gravity(proj, jobs=1):
     """`gravity`/`textAlignment` values that pin text to a physical side.
 
     Android's `RtlHardcoded` check. `gravity="left"` is a left edge in every
@@ -1942,34 +1983,19 @@ def hardcoded_gravity(proj):
     Returns [(path, attr, value)] and never rewrites anything: a value like
     `left|bottom` needs its tokens translated, not its attribute renamed, and
     guessing which token the author meant is how a tool breaks a layout.
+
+    `--jobs` only spreads `_gravity_chunk` over text read here, serially; the
+    chunk is the serial body, so the two lists are the same list.
     """
-    res = Path(proj) / "res"
-    if not res.is_dir():
-        return []
-    found = []
-    # Both quote characters: Android accepts either, and `aqlab rtl` already
-    # migrates a single-quoted attribute. Reading only double-quote made
-    # a single-quoted gravity invisible here, and gravity is the one
-    # defect `aqlab rtl` deliberately leaves for the user to read.
-    attr_re = re.compile(r'\b(?:android:)?(gravity|layout_gravity|foregroundGravity|'
-                         r'textAlignment)\s*=\s*([\x22\x27])([^\x22\x27]*)\2')
-    # `imageLeft` matches the old word-boundary test and is real (a
-    # selection-dialog row names its slot `imageLeft` in Material). What has to
-    # change is the token inside the value, so only that counts.
+    rows = []
+    # One read per file, in `gravity_files` order: the pool never touches disk.
     for f in gravity_files(proj):
         try:
-            txt = f.read_text(encoding="utf-8", errors="replace")
+            rows.append((f.relative_to(proj).as_posix(),
+                         f.read_text(encoding="utf-8", errors="replace")))
         except OSError:
             continue
-        for m in attr_re.finditer(txt):
-            attr, val = m.group(1), m.group(3)
-            # `imageLeft` matches the old word-boundary test and is real (a
-            # selection-dialog row names its slot `imageLeft` in Material). What
-            # has to change is the token inside the value, so only that counts.
-            if not GRAVITY_TOKEN_HIT.search(val):
-                continue
-            found.append((f.relative_to(proj).as_posix(), attr, val))
-    return found
+    return gravity_parallel(rows, jobs)
 
 
 def _gravity_chunk(pair):
@@ -2065,7 +2091,7 @@ def walk_layout(txt, full=False):
         i = j + 1
 
 
-def direction_pins(proj):
+def direction_pins(proj, jobs=1):
     """A layout direction pinned on a row that also carries physical attributes,
     and a manifest that opts out of RTL entirely.
 
@@ -2131,9 +2157,19 @@ def direction_pins(proj):
         if manifest_supports_rtl(proj) is False:
             out.append(("supportsRtl", "AndroidManifest.xml", ""))
 
-    res = Path(proj) / "res"
-    if not res.is_dir():
-        return out
+
+    # `pins_in` is the serial body, spread over text read here; the lambda is
+    # the only unpicklable bit and `_spread_pairs` keeps the spawn context.
+    out.extend(_spread_pairs(text_sources(proj, ("layout*/*.xml",)),
+                             _pins_chunk, jobs))
+    return out
+
+
+def _direction_pins_re():
+    """The four regexes `direction_pins` and `pins_in` share.
+
+    Compiled once at import: a per-call compile cost 3x the sweep it feeds.
+    """
     # Any start tag, self-closing or not: the interesting case is a container
     # wrapping children, which is a plain `<LinearLayout ...>`. Attributes are
     # matched with plain `\s`, not `` — apktool puts the first attribute on
@@ -2154,117 +2190,126 @@ def direction_pins(proj):
         + r"|(?<![\w.-])(%s)\s*=\s*[\x22\x27][^\x22\x27]*\b(?:left|right)\b"
           % "|".join(GRAVITY_ATTRS | TEXT_ALIGN_ATTRS))
 
-    for f in sorted(res.glob("layout*/*.xml")):
-        try:
-            txt = f.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        pinned = []  # [(depth, tag, value)] still in scope
-        # [(depth, horizontal?, pinned?)]: the axis in force, and whether the
-        # direction is pinned. A `vertical` row that says nothing does not clear
-        # the axis — a child of it with no orientation is a `wrap_content` row,
-        # laid out along the horizontal axis of the row above.
-        axis = []
-        for tag, body, depth, self_closing in walk_layout(txt):
-            # `>=`, not `>`: the pin belongs to an element that closed as soon as a
-            # new start tag appears at the same depth — its sibling is outside it,
-            # so the pin must not reach it. Measured: a pinned row's following
-            # sibling was reported as inheriting a direction nobody set on it.
+    return pin_re, txt_re, any_dir_re, phys_re
+
+
+PIN_RE, TXT_RE, ANY_DIR_RE, PHYS_RE = _direction_pins_re()
+
+
+def pins_in(txt, name):
+    """`direction_pins` for one file: the walk, the axis tracking, the chain.
+
+    Module level and argument-only so a `spawn` pool can pickle it. The
+    manifest half stays in `direction_pins` — one file, read once.
+    """
+    out = []
+    pin_re, txt_re, any_dir_re, phys_re = PIN_RE, TXT_RE, ANY_DIR_RE, PHYS_RE
+    pinned = []  # [(depth, tag, value)] still in scope
+    # [(depth, horizontal?, pinned?)]: the axis in force, and whether the
+    # direction is pinned. A `vertical` row that says nothing does not clear
+    # the axis — a child of it with no orientation is a `wrap_content` row,
+    # laid out along the horizontal axis of the row above.
+    axis = []
+    for tag, body, depth, self_closing in walk_layout(txt):
+        # `>=`, not `>`: the pin belongs to an element that closed as soon as a
+        # new start tag appears at the same depth — its sibling is outside it,
+        # so the pin must not reach it. Measured: a pinned row's following
+        # sibling was reported as inheriting a direction nobody set on it.
+        while pinned and pinned[-1][0] >= depth:
+            pinned.pop()
+        while axis and axis[-1][0] >= depth:
+            axis.pop()
+        # `horizontal` here means "a left edge exists", `vertical` the
+        # opposite, `locale` makes the axis follow the locale — which is the
+        # same flip `pinNested` is about, so only a pinned axis is tracked.
+        inherited = axis[-1] if axis and axis[-1][1] else None
+        # `locale` is the platform default spelled out, not a pin.
+        local = None
+        for kind, rx in (("layoutDirection", pin_re), ("textDirection", txt_re)):
+            pm = rx.search(body)
+            if pm:
+                local = (kind, pm.group(1))
+                break
+        if not self_closing:
+            # The row's own orientation, not its tag's default: a
+            # `LinearLayout` that states `vertical` stacks its children, and
+            # whatever it leaves unstated is a horizontal `wrap_content`
+            # strip. `TableRow` is horizontal without saying so, and the
+            # remaining tags have no `orientation` to state.
+            stated = re.search(r'(?<![\w.-])orientation\s*=\s*[\x22\x27](\w+)',
+                               body)
+            if stated:
+                axis.append((depth, stated.group(1) == "horizontal", False))
+            elif tag in HORIZONTAL_BY_DEFAULT:
+                axis.append((depth, True, False))
+        if local:
+            # A direction pin decides whether the axis flips, not whether it
+            # exists: a pinned vertical column still stacks its children.
+            # Recording it as horizontal is what the `row` test below
+            # already does for the row's own shape.
+            axis.append((depth, True, True))
             while pinned and pinned[-1][0] >= depth:
                 pinned.pop()
-            while axis and axis[-1][0] >= depth:
-                axis.pop()
-            # `horizontal` here means "a left edge exists", `vertical` the
-            # opposite, `locale` makes the axis follow the locale — which is the
-            # same flip `pinNested` is about, so only a pinned axis is tracked.
-            inherited = axis[-1] if axis and axis[-1][1] else None
-            # `locale` is the platform default spelled out, not a pin.
-            local = None
-            for kind, rx in (("layoutDirection", pin_re), ("textDirection", txt_re)):
-                pm = rx.search(body)
-                if pm:
-                    local = (kind, pm.group(1))
-                    break
+            # A self-closed row encloses nothing: pushing it would leak the
+            # pin onto its following siblings, which are outside it. Found
+            # by a `<TextView ... />` pin whose next sibling row was reported
+            # as inheriting a direction that no ancestor set.
             if not self_closing:
-                # The row's own orientation, not its tag's default: a
-                # `LinearLayout` that states `vertical` stacks its children, and
-                # whatever it leaves unstated is a horizontal `wrap_content`
-                # strip. `TableRow` is horizontal without saying so, and the
-                # remaining tags have no `orientation` to state.
-                stated = re.search(r'(?<![\w.-])orientation\s*=\s*[\x22\x27](\w+)',
-                                   body)
-                if stated:
-                    axis.append((depth, stated.group(1) == "horizontal", False))
-                elif tag in HORIZONTAL_BY_DEFAULT:
-                    axis.append((depth, True, False))
-            if local:
-                # A direction pin decides whether the axis flips, not whether it
-                # exists: a pinned vertical column still stacks its children.
-                # Recording it as horizontal is what the `row` test below
-                # already does for the row's own shape.
-                axis.append((depth, True, True))
-                while pinned and pinned[-1][0] >= depth:
-                    pinned.pop()
-                # A self-closed row encloses nothing: pushing it would leak the
-                # pin onto its following siblings, which are outside it. Found
-                # by a `<TextView ... />` pin whose next sibling row was reported
-                # as inheriting a direction that no ancestor set.
-                if not self_closing:
-                    pinned.append((depth, tag, local[1]))
-            # A row is horizontal when it says so, when its tag's default
-            # orientation is horizontal — `LinearLayout`, `RadioGroup`,
-            # `TableRow` — or when it says nothing and the axis in force at it
-            # is horizontal: a `wrap_content` child of a vertical column is a
-            # row, and a child of a horizontal row is measured along that same
-            # axis. Everything else is a leaf or a vertical container:
-            # a `TextView`'s own padding belongs to its parent row and is
-            # reported with that row's shape, and a `ScrollView` stacks its
-            # children whatever the direction. Only a pin on a *horizontal* row
-            # moves the axis, so only that is a finding.
-            # A bare `<include>` counts only when it carries the physical
-            # attribute itself: the row it pulls in lives in another file and is
-            # linted there.
-            row = (bool(re.search(r'(?<![\w.-])orientation\s*=\s*[\x22\x27]horizontal',
-                                  body))
-                   or (not re.search(r'(?<![\w.-])orientation\s*=', body)
-                       and (tag in HORIZONTAL_BY_DEFAULT
-                            or (not looks_leaf(tag)
-                                and inherited is not None and inherited[0])))
-                   or tag == "include")
-            # A local pin judges the renamed half alone: a row that pins its own
-            # direction already opted out of the locale, and when only its text
-            # align is stuck that is `RtlHardcoded`, which owns it and knows the
-            # physical-token rule. Under an inherited pin both halves count — the
-            # row cannot follow the locale any more, so a physical token in a
-            # gravity keeps the text on one side and has to be reported.
-            phys_names = tuple(m.group(1) or m.group(2) for m in phys_re.finditer(body))
-            if local:
-                phys = any(m.group(1) for m in phys_re.finditer(body))
-            else:
-                phys = bool(phys_names)
-            if not phys or not row:
-                continue
-            # A local pin and an inherited one are not the same defect: a row
-            # pinning its *own* direction already opted out of the locale and
-            # `--fix` has a decision to make about it (drop an `ltr` pin), while
-            # an inherited pin is only visible through the physical attrs the
-            # row itself carries. Reporting a locally pinned row under the
-            # inherited one as well double-counts it — and the rtl-mirror row
-            # came back as a `pinNested` it never was.
-            chain = None if local else (pinned[-1][2] if pinned else None)
-            if local:
-                kind, val = local
-                out.append((kind, f.relative_to(proj).as_posix(), tag, val))
-            elif chain and not any_dir_re.search(body):
-                # A child that sets its own direction breaks the chain: it and
-                # everything under it follow that value, not the outer pin.
-                # The attribute names travel with the finding: the fixer has to
-                # migrate exactly what the report named, and the row may hold a
-                # padding and a gravity at once.
-                names = tuple(sorted({m.group(1) or m.group(2)
-                                      for m in phys_re.finditer(body)}))
-                out.append(("pinNested", f.relative_to(proj).as_posix(), tag,
-                            chain, names))
+                pinned.append((depth, tag, local[1]))
+        # A row is horizontal when it says so, when its tag's default
+        # orientation is horizontal — `LinearLayout`, `RadioGroup`,
+        # `TableRow` — or when it says nothing and the axis in force at it
+        # is horizontal: a `wrap_content` child of a vertical column is a
+        # row, and a child of a horizontal row is measured along that same
+        # axis. Everything else is a leaf or a vertical container:
+        # a `TextView`'s own padding belongs to its parent row and is
+        # reported with that row's shape, and a `ScrollView` stacks its
+        # children whatever the direction. Only a pin on a *horizontal* row
+        # moves the axis, so only that is a finding.
+        # A bare `<include>` counts only when it carries the physical
+        # attribute itself: the row it pulls in lives in another file and is
+        # linted there.
+        row = (bool(re.search(r'(?<![\w.-])orientation\s*=\s*[\x22\x27]horizontal',
+                              body))
+               or (not re.search(r'(?<![\w.-])orientation\s*=', body)
+                   and (tag in HORIZONTAL_BY_DEFAULT
+                        or (not looks_leaf(tag)
+                            and inherited is not None and inherited[0])))
+               or tag == "include")
+        # A local pin judges the renamed half alone: a row that pins its own
+        # direction already opted out of the locale, and when only its text
+        # align is stuck that is `RtlHardcoded`, which owns it and knows the
+        # physical-token rule. Under an inherited pin both halves count — the
+        # row cannot follow the locale any more, so a physical token in a
+        # gravity keeps the text on one side and has to be reported.
+        phys_names = tuple(m.group(1) or m.group(2) for m in phys_re.finditer(body))
+        if local:
+            phys = any(m.group(1) for m in phys_re.finditer(body))
+        else:
+            phys = bool(phys_names)
+        if not phys or not row:
+            continue
+        # A local pin and an inherited one are not the same defect: a row
+        # pinning its *own* direction already opted out of the locale and
+        # `--fix` has a decision to make about it (drop an `ltr` pin), while
+        # an inherited pin is only visible through the physical attrs the
+        # row itself carries. Reporting a locally pinned row under the
+        # inherited one as well double-counts it — and the rtl-mirror row
+        # came back as a `pinNested` it never was.
+        chain = None if local else (pinned[-1][2] if pinned else None)
+        if local:
+            kind, val = local
+            out.append((kind, name, tag, val))
+        elif chain and not any_dir_re.search(body):
+            # A child that sets its own direction breaks the chain: it and
+            # everything under it follow that value, not the outer pin.
+            # The attribute names travel with the finding: the fixer has to
+            # migrate exactly what the report named, and the row may hold a
+            # padding and a gravity at once.
+            names = tuple(sorted({m.group(1) or m.group(2)
+                                  for m in phys_re.finditer(body)}))
+            out.append(("pinNested", name, tag,
+                        chain, names))
     return out
 
 
@@ -2279,7 +2324,7 @@ def direction_pins(proj):
 # `material_timepicker_textinput_display`, whose whole content is `<include>`s of
 # hour/minute parts — no text widget anywhere beneath, so neither is a finding.
 RE_TEXT_WIDGET = re.compile(r"<(?:\w+\.)*"
-                            r"(?:TextView|EditText|Button|AutoCompleteTextView)\b")
+                        r"(?:TextView|EditText|Button|AutoCompleteTextView)\b")
 
 
 RE_DECLARES_DIRECTION_ENUM = re.compile(
@@ -2305,7 +2350,17 @@ def declared_direction_values(proj):
     return out
 
 
-def rtl_enabled(proj, locale="ar"):
+def _rtl_chunk(pair):
+    """`rtl_enabled_in` for one (relative path, text) pair, picklable for `spawn`.
+
+    The declared-enum set and the manifest flip are project-wide gates, so they
+    stay in `rtl_enabled`; a child file can only answer for its own text.
+    """
+    name, txt = pair
+    return rtl_enabled_in(txt, name, set(), None)
+
+
+def rtl_enabled(proj, locale="ar", jobs=1):
     """`layoutDirection`/`textDirection` set to a literal that is *not* a pin.
 
     `direction_pins` reports the one case that is unambiguously a defect: a pin
@@ -2350,69 +2405,76 @@ def rtl_enabled(proj, locale="ar"):
     "textDirection", or "supportsRtl" (path `AndroidManifest.xml`, value
     "false").
     """
-    res = Path(proj) / "res"
-    if not res.is_dir():
-        return []
     harmless = {"locale", "firstStrong", "anyRtl", "inherit"}
     declared = declared_direction_values(proj)
     supports_rtl = manifest_supports_rtl(proj)
     out = []
-    for f in sorted(res.glob("layout*/**/*.xml")):
-        if not f.is_file():
-            continue
-        rel = f.relative_to(proj).as_posix()
-        txt = f.read_text(encoding="utf-8", errors="replace")
-        # `walk_layout` hands back the start tag's own text in `body`, which stops
-        # at its `>` — exactly this element's attributes, never its children's.
-        # `full=True` adds the body's offset and the element's depth, both needed
-        # to delimit the subtree for the text-widget test below.
-        bounds = [(off, tag, body, dep, sc) for tag, body, dep, sc, off
-                  in walk_layout(txt, full=True)]
-        for n, (off, tag, body, dep, sc) in enumerate(bounds):
-            # The subtree ends at the next start tag that is not deeper — the
-            # next sibling, an uncle, or (for a leaf) the tag right after it.
-            stop = len(txt)
-            if not sc:
-                for m2 in range(n + 1, len(bounds)):
-                    if bounds[m2][3] <= dep:
-                        stop = bounds[m2][0]
-                        break
-            subtree = txt[off:stop]
-            for m in re.finditer(r"(?<![\w.\-])((?:\w+:)?)(layoutDirection|textDirection)"
-                                 r"\s*=\s*[\x22\x27]([\w@?][\w\-./@+:]*)", body):
-                # One attribute per match, on the element that actually carries
-                # it: `body` is the start tag alone.
-                prefix, attr, val = m.group(1), m.group(2), m.group(3)
-                if val in harmless or val in declared:
-                    continue
-                if attr == "textDirection" and val == "rtl":
-                    continue  # follows the locale on an RTL screen anyway
-                if attr == "layoutDirection" and val == "rtl" and looks_leaf(tag):
-                    continue  # a mirrored glyph, not a container direction
-                # A `layoutDirection` literal cannot beat a locale that never
-                # turned RTL on. Measured, not assumed: the gate fires only on an
-                # explicit opt-out. An absent `supportsRtl` keeps the row
-                # reported — the default is pitfall (see `rtl`), but `lint`
-                # runs on projects the author may switch on later, and a silent
-                # row there is a defect nobody sees.
-                if attr == "layoutDirection" and supports_rtl is False:
-                    continue
-                if prefix and "." in tag:
-                    continue  # a dotted class is custom: it may read its own styleable
-                # The subtree, plus the element's own tag: `walk_layout` yields
-                # only the tag's own text, so a wrapper reads as empty and its
-                # children are the only evidence; a leaf's subtree starts after
-                # its `<`, so the tag has to be tested separately or every leaf
-                # looks empty and its own pin is dropped.
-                if not (RE_TEXT_WIDGET.search(subtree)
-                        or RE_TEXT_WIDGET.match("<" + tag)):
-                    continue  # see `RE_TEXT_WIDGET` — order, not language
-                out.append((attr, rel, tag, val))
+    sources = text_sources(proj, ("layout*/**/*.xml",))
+    if jobs <= 1 or len(sources) < 8:
+        for rel, txt in sources:
+            out.extend(rtl_enabled_in(txt, rel, declared, supports_rtl))
+    else:
+        out.extend(_spread_pairs(sources, _rtl_chunk, jobs))
     # An opt-out is a `lint` finding, not a `--fix` one: the attribute is a
     # build-wide switch, so the warning points at the manifest instead of
     # promising a row rewrite.
     if supports_rtl is False:
         out.append(("supportsRtl", "AndroidManifest.xml", "", "false"))
+    return out
+
+
+
+def rtl_enabled_in(txt, rel, declared, supports_rtl):
+    """`rtl_enabled` for one file: the walk, the subtree, the literal gates.
+
+    Module level and argument-only so a `spawn` pool can pickle it. `declared`
+    and `supports_rtl` are the parent's (a values file and the manifest), passed
+    through unchanged — that is what makes the pooled answer the serial answer.
+    """
+    harmless = {"locale", "firstStrong", "anyRtl", "inherit"}
+    out = []
+    bounds = [(off, tag, body, dep, sc) for tag, body, dep, sc, off
+              in walk_layout(txt, full=True)]
+    for n, (off, tag, body, dep, sc) in enumerate(bounds):
+        # The subtree ends at the next start tag that is not deeper — the
+        # next sibling, an uncle, or (for a leaf) the tag right after it.
+        stop = len(txt)
+        if not sc:
+            for m2 in range(n + 1, len(bounds)):
+                if bounds[m2][3] <= dep:
+                    stop = bounds[m2][0]
+                    break
+        subtree = txt[off:stop]
+        for m in re.finditer(r"(?<![\w.\-])((?:\w+:)?)(layoutDirection|textDirection)"
+                             r"\s*=\s*[\x22\x27]([\w@?][\w\-./@+:]*)", body):
+            # One attribute per match, on the element that actually carries
+            # it: `body` is the start tag alone.
+            prefix, attr, val = m.group(1), m.group(2), m.group(3)
+            if val in harmless or val in declared:
+                continue
+            if attr == "textDirection" and val == "rtl":
+                continue  # follows the locale on an RTL screen anyway
+            if attr == "layoutDirection" and val == "rtl" and looks_leaf(tag):
+                continue  # a mirrored glyph, not a container direction
+            # A `layoutDirection` literal cannot beat a locale that never
+            # turned RTL on. Measured, not assumed: the gate fires only on an
+            # explicit opt-out. An absent `supportsRtl` keeps the row
+            # reported — the default is pitfall (see `rtl`), but `lint`
+            # runs on projects the author may switch on later, and a silent
+            # row there is a defect nobody sees.
+            if attr == "layoutDirection" and supports_rtl is False:
+                continue
+            if prefix and "." in tag:
+                continue  # a dotted class is custom: it may read its own styleable
+            # The subtree, plus the element's own tag: `walk_layout` yields
+            # only the tag's own text, so a wrapper reads as empty and its
+            # children are the only evidence; a leaf's subtree starts after
+            # its `<`, so the tag has to be tested separately or every leaf
+            # looks empty and its own pin is dropped.
+            if not (RE_TEXT_WIDGET.search(subtree)
+                    or RE_TEXT_WIDGET.match("<" + tag)):
+                continue  # see `RE_TEXT_WIDGET` — order, not language
+            out.append((attr, rel, tag, val))
     return out
 
 
@@ -2444,7 +2506,7 @@ def manifest_supports_rtl(proj):
     return None
 
 
-def rtl_drawable_dirs(proj):
+def rtl_drawable_dirs(proj, jobs=1):
     """`res/drawable-ldrtl-*` folders that mirror nothing.
 
     A `ldrtl` qualifier is only meaningful if the file inside differs from the
@@ -2473,6 +2535,12 @@ def rtl_drawable_dirs(proj):
     out = []
     # Only the two resource types that are drawables. `values-ldrtl` is a
     # different story (strings) and mirroring geometry is not what it means.
+    # `--jobs` has nothing to spread here: the work per file is one `read_bytes`
+    # of a few hundred bytes against a name it already has, and the pool would
+    # cost more than the compare. Accepted for call-site symmetry and ignored,
+    # deliberately — a knob that changed nothing is honest; a knob that spawned
+    # workers for 8 files is not.
+    del jobs
     for d in sorted(res.glob("drawable*-ldrtl*")) + sorted(res.glob("mipmap*-ldrtl*")):
         if not d.is_dir():
             continue
@@ -2570,7 +2638,7 @@ SYMMETRY_PAIRS = (
 )
 
 
-def symmetry_problems(proj):
+def symmetry_problems(proj, jobs=1):
     """Elements with one side's padding/margin set and the other missing.
 
     Scans element-by-element rather than file-wide: the pair has to be missing
@@ -2586,48 +2654,52 @@ def symmetry_problems(proj):
     `paddingRight` alone is still reported, because `paddingStart`/`paddingEnd`
     are what a flip actually needs.
     """
-    res = Path(proj) / "res"
-    if not res.is_dir():
-        return []
+    return _spread_pairs(text_sources(proj, ("layout*/*.xml", "menu*/*.xml")),
+                         _symmetry_chunk, jobs)
+
+
+def _symmetry_chunk(pair):
+    """Symmetry holes in one (relative path, text) pair.
+
+    The element loop of `symmetry_problems`, in one body so the pooled and the
+    serial answer cannot drift: the parent spells the file list, the child only
+    runs this regex over the text it was handed.
+    """
     found = []
     elem = re.compile(r"<([A-Za-z][\w.]*)\b([^>]*?)/?>", re.DOTALL)
-    for f in sorted(list(res.glob("layout*/*.xml")) + list(res.glob("menu*/*.xml"))):
-        try:
-            txt = f.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for m in elem.finditer(txt):
-            tag, body = m.group(1), m.group(2)
-            have = {}
-            # Both quote characters: Android accepts either, and `aqlab rtl` now
-            # migrates a single-quoted side, so the two must agree on what they see.
-            for a in re.finditer(
-                    r"\b(?:android:)?([\w.]+)\s*=\s*[\x22\x27](.*?)[\x22\x27]", body):
-                have[a.group(1)] = a.group(2)
-            # A physical pair is covered by the modern pair: `paddingLeft` with
-            # both `paddingStart` and `paddingEnd` needs no `paddingRight` on a
-            # device that honours start/end. Measured on the real APK: all ten of
-            # its symmetry rows are that shape (minSdkVersion 26), so every one of
-            # them was a false positive.
-            # `paddingStart`+`paddingEnd` present means the physical side has a
-            # working modern twin: pair the spellings by their kind word.
-            covered = set()
-            for phys_l, phys_r, kind in SYMMETRY_PAIRS:
-                mod = "layout_margin" if kind == "margin" else kind
-                if (mod + "Start") in have and (mod + "End") in have:
-                    covered.add(phys_l)
-                    covered.add(phys_r)
-            for left, right, _kind in SYMMETRY_PAIRS:
-                if left in have and right not in have:
-                    if left in covered:
-                        continue
-                    found.append((f.relative_to(proj).as_posix(), tag, left, right,
-                                  have[left]))
-                elif right in have and left not in have:
-                    if right in covered:
-                        continue
-                    found.append((f.relative_to(proj).as_posix(), tag, right, left,
-                                  have[right]))
+    name, txt = pair
+    for m in elem.finditer(txt):
+        tag, body = m.group(1), m.group(2)
+        have = {}
+        # Both quote characters: Android accepts either, and `aqlab rtl` now
+        # migrates a single-quoted side, so the two must agree on what they see.
+        for a in re.finditer(
+                r"\b(?:android:)?([\w.]+)\s*=\s*[\x22\x27](.*?)[\x22\x27]", body):
+            have[a.group(1)] = a.group(2)
+        # A physical pair is covered by the modern pair: `paddingLeft` with
+        # both `paddingStart` and `paddingEnd` needs no `paddingRight` on a
+        # device that honours start/end. Measured on the real APK: all ten of
+        # its symmetry rows are that shape (minSdkVersion 26), so every one of
+        # them was a false positive.
+        # `paddingStart`+`paddingEnd` present means the physical side has a
+        # working modern twin: pair the spellings by their kind word.
+        covered = set()
+        for phys_l, phys_r, kind in SYMMETRY_PAIRS:
+            mod = "layout_margin" if kind == "margin" else kind
+            if (mod + "Start") in have and (mod + "End") in have:
+                covered.add(phys_l)
+                covered.add(phys_r)
+        for left, right, _kind in SYMMETRY_PAIRS:
+            if left in have and right not in have:
+                if left in covered:
+                    continue
+                found.append((name, tag, left, right,
+                              have[left]))
+            elif right in have and left not in have:
+                if right in covered:
+                    continue
+                found.append((name, tag, right, left,
+                              have[right]))
     return found
 
 
@@ -2930,6 +3002,10 @@ def cmd_diff(args):
 
 def cmd_lint(args):
     proj = Path(args.proj)
+    # `lint --jobs N`: one read per file, then every layout sweep below is
+    # spread. 1 (the default) keeps the whole run serial.
+    jobs = getattr(args, "jobs", None)
+    jobs = 1 if jobs is None else max(0, jobs) or 1
     res = proj / "res"
     if not find_default_strings(proj):
         raise Fail("no values/strings.xml — decode the APK first")
@@ -3074,21 +3150,21 @@ def cmd_lint(args):
     # Baked-in lettering in vector geometry: `lint` cannot fix it and a
     # heuristic must never fail a build, so it is a warning with the path so the
     # user can look at the drawing itself.
-    for pth, n, w, h in text_like_vectors(proj):
+    for pth, n, w, h in text_like_vectors(proj, jobs):
         add("warn", pth, f"{n} paths at {w}x{h}dp — looks like lettering baked into "
                          f"geometry; it will not mirror with the UI, check it by eye",
             "vector-text")
 
     # Android's RtlSymmetry: one side without the other renders off-centre once
     # the layout flips, and nothing in the build says so.
-    for path, tag, have_a, missing_b, value in symmetry_problems(proj):
+    for path, tag, have_a, missing_b, value in symmetry_problems(proj, jobs):
         add("warn", f"{path}:<{tag}>",
             f"{have_a}=\"{value}\" without {missing_b} — not symmetric when the "
             f"layout flips", "rtl-symmetry")
 
     # RtlHardcoded: a physical side in a gravity value does not follow the
     # locale, so it has to be renamed by hand — say where.
-    for path, attr, value in hardcoded_gravity(proj):
+    for path, attr, value in hardcoded_gravity(proj, jobs):
         add("warn", f"{path}:{attr}", f'"{value}" pins text to a physical side; '
                                       f'`aqlab lint --fix` rewrites it to start/end',
             "rtl-hardcoded")
@@ -3096,7 +3172,7 @@ def cmd_lint(args):
     # A pinned direction on a row that also carries left/right attributes is the
     # author working around RTL instead of supporting it — the pin wins over the
     # locale and the row stays LTR in Arabic.
-    for kind, where, *rest in direction_pins(proj):
+    for kind, where, *rest in direction_pins(proj, jobs):
         if kind == "supportsRtl":
             # Reported by rtl_enabled and nowhere else: two rules naming the
             # same manifest printed the same error twice and counted two errors
@@ -3136,7 +3212,7 @@ def cmd_lint(args):
     # locale. `direction_pins` only names the row that also carries physical
     # attributes; this is the same literal on a row that carries none, where the
     # default would have followed the language and the literal does not.
-    for attr, path, tag_, val in rtl_enabled(proj, args.locale):
+    for attr, path, tag_, val in rtl_enabled(proj, args.locale, jobs):
         if attr == "supportsRtl":
             # Not a row and not a `--fix` job: the switch has to be on before
             # any row can mirror, so the message names the command that flips it.
@@ -3158,7 +3234,7 @@ def cmd_lint(args):
     # A `ldrtl` folder that mirrors nothing is not a translation problem, so it
     # is reported without the locale gate above — it costs the same in any RTL
     # language and the author meant it to flip.
-    for where, kind, detail in rtl_drawable_dirs(proj):
+    for where, kind, detail in rtl_drawable_dirs(proj, jobs):
         if kind == "empty":
             add("warn", where, "ldrtl folder is empty — it mirrors nothing; fill it "
                                "or delete it so the build stops looking RTL-ready",
@@ -3997,6 +4073,9 @@ def build_parser():
     s = sub.add_parser("lint", help="format specifier, escaping and coverage checks — CI friendly")
     s.add_argument("proj")
     s.add_argument("--locale", default="ar")
+    s.add_argument("--jobs", type=parse_jobs, default=None, metavar="N",
+                   help="workers for the layout sweeps (0 = every CPU); "
+                        "default $AQLAB_JOBS or 1")
     s.add_argument("-v", "--verbose", action="store_true", help="include info-level notes")
     s.add_argument("--fail-under", type=float, metavar="PCT", dest="fail_under",
                    help="exit non-zero when overall coverage is below PCT")

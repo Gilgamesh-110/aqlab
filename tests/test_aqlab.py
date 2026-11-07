@@ -1616,6 +1616,74 @@ def test_rtl_drawable_dirs(tmp):
     check("lint reports identical copy", "byte-identical to" in text, text[-600:])
 
 
+def test_jobs_parity(tmp):
+    """`--jobs N` is a speed knob for every layout sweep, never a behaviour.
+
+    Five sweeps reach a pool: symmetry, gravity, direction pins, RTL literals
+    and text-like vectors. Each is the serial body with the file list cut out,
+    so the day one of them reorders or drops a hit, `lint` and `lint --jobs 4`
+    disagree on the same tree. One fixture with a hit for every sweep, then the
+    lists compared, then the pool asserted to be what ran — a wrapper that
+    ignored `jobs` would pass the equality checks by staying serial.
+    """
+    root = Path(tmp) / "sweepjobs"
+    res = root / "res"
+    (res / "layout").mkdir(parents=True)
+    (res / "drawable").mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<application android:supportsRtl="true"/></manifest>', encoding="utf-8")
+    head = '<?xml version="1.0" encoding="utf-8"?>' + chr(10)
+    (res / "layout" / "a.xml").write_text(
+        head + '<LinearLayout>' + chr(10)
+        + '  <LinearLayout android:layoutDirection="ltr" android:paddingLeft="4dp">' + chr(10)
+        + '    <TextView android:gravity="left|center" android:paddingLeft="2dp"/>' + chr(10)
+        + '  </LinearLayout>' + chr(10)
+        + '</LinearLayout>' + chr(10), encoding="utf-8")
+    for i in range(9):
+        (res / "layout" / ("f%d.xml" % i)).write_text(
+            head + '<LinearLayout>' + chr(10)
+            + '  <TextView android:paddingLeft="%ddp"/>' % (i + 1) + chr(10)
+            + '</LinearLayout>' + chr(10), encoding="utf-8")
+    # a text-like vector: twelve short filled paths at icon size
+    paths = "".join('<path android:pathData="M%d,0 L1,1z" android:fillColor="#f00"/>' % i
+                    for i in range(12))
+    (res / "drawable" / "wordmark.xml").write_text(
+        '<vector xmlns:android="http://schemas.android.com/apk/res/android" '
+        'android:width="24dip" android:height="24dip">' + paths + '</vector>',
+        encoding="utf-8")
+    sweeps = (
+        ("symmetry", lambda jobs: A.symmetry_problems(root, jobs)),
+        ("gravity", lambda jobs: A.hardcoded_gravity(root, jobs)),
+        ("pins", lambda jobs: A.direction_pins(root, jobs)),
+        ("rtl literals", lambda jobs: A.rtl_enabled(root, "ar", jobs)),
+        ("text vectors", lambda jobs: A.text_like_vectors(root, jobs)),
+    )
+    for name, fn in sweeps:
+        serial = fn(1)
+        check("%s sweep really has hits" % name, bool(serial), str(serial))
+        for jobs in (2, 4, 8):
+            check("%s: --jobs %d equals the serial list" % (name, jobs),
+                  fn(jobs) == serial, str(fn(jobs)))
+
+    used = []
+    real = A.multiprocessing.get_context
+
+    def counted(c):
+        used.append(c)
+        return real(c)
+    A.multiprocessing.get_context = counted
+    try:
+        for _name, fn in sweeps:
+            fn(4)
+    finally:
+        A.multiprocessing.get_context = real
+    # One drawable is below `_spread_pairs`' eight-file floor by design — four
+    # spawns for five sweeps is the floor working, not a wrapper skipping work.
+    check("every multi-file sweep starts a pool at --jobs 4",
+          used == ["spawn"] * 4, str(used))
+
+
 def test_gravity_jobs(tmp):
     """`--jobs N` is a speed knob, never a behaviour.
 
@@ -4055,6 +4123,7 @@ def main():
         test_symmetry_partial_modern_is_not_coverage(tmp)
         test_hardcoded_gravity(tmp)
         test_gravity_jobs(tmp)
+        test_jobs_parity(tmp)
         test_gravity_compound_token(tmp)
         test_lint_fix_gravity(tmp)
         test_lint_fix(tmp)
