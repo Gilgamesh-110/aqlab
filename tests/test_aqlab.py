@@ -2924,6 +2924,72 @@ def test_fixture_locale_qualifier(tmp):
     check("region does not stand alone", "rAU" not in listed)
 
 
+def test_symmetry_covered_by_modern_pair(tmp):
+    """A physical side whose modern twin covers both ends is not a hole.
+
+    `paddingLeft` + `paddingStart` + `paddingEnd` is Material's minSdk-era
+    shape: old platforms read the physical attribute, new ones read start/end.
+    Reporting the missing `paddingRight` there was wrong on every start/end
+    platform, and on the real APK it was wrong ten times out of ten
+    (minSdkVersion 26). The reverse still has to report — `paddingLeft` +
+    `paddingRight` with no start/end is exactly what breaks a flip.
+    """
+    root = Path(tmp) / "symcov"
+    layout = root / "res" / "layout"
+    layout.mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:supportsRtl="true"/></manifest>',
+        encoding="utf-8")
+    (layout / "a.xml").write_text(
+        '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android">'
+        '<ImageView android:paddingLeft="8dp" android:paddingStart="8dp"'
+        ' android:paddingEnd="8dp" android:layout_width="1dp"'
+        ' android:layout_height="1dp"/>'
+        '<Button android:layout_marginRight="5dp" android:layout_width="1dp"'
+        ' android:layout_height="1dp"/>'
+        '<TextView android:layout_marginStart="4dp" android:layout_marginEnd="4dp"'
+        ' android:layout_width="1dp" android:layout_height="1dp"/>'
+        '</FrameLayout>', encoding="utf-8")
+
+    got = A.symmetry_problems(root)
+    check("covered physical side is not a hole",
+          not [g for g in got if g[1] == "ImageView"], str(got))
+    check("physical-only side still reports",
+          [(g[1], g[2]) for g in got] == [("Button", "layout_marginRight")], str(got))
+    # A physical-only hole is `aqlab rtl`'s job, not `--fix`'s: adding
+    # `layout_marginStart` beside a `layout_marginRight` would leave the row
+    # with the right margin set twice on a modern platform.
+    check("--fix leaves the physical-only row to aqlab rtl",
+          A.fix_symmetry(root, dry=False) == 0, "")
+
+
+def test_symmetry_partial_modern_is_not_coverage(tmp):
+    """Only *both* start and end count as coverage.
+
+    `paddingLeft` + `paddingStart` alone still breaks a flip: start resolves to
+    the left edge in LTR and to the right edge in RTL, so the row is fine one
+    way and asymmetric the other. Measured on the real APK: no row has this
+    shape, so it has to be a synthetic fixture or the guard is untested.
+    """
+    root = Path(tmp) / "sympart"
+    layout = root / "res" / "layout"
+    layout.mkdir(parents=True)
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application/></manifest>', encoding="utf-8")
+    (layout / "a.xml").write_text(
+        '<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' android:paddingLeft="8dp" android:paddingStart="8dp"'
+        ' android:layout_width="1dp" android:layout_height="1dp"/>', encoding="utf-8")
+    got = A.symmetry_problems(root)
+    # Both pairs are half-open here, and both are real: the physical side has
+    # no right, and the modern side it gained has no end.
+    check("half a modern pair is not coverage",
+          [(g[2], g[3]) for g in got] == [("paddingLeft", "paddingRight"),
+                                          ("paddingStart", "paddingEnd")], str(got))
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         proj = fixture(tmp)
@@ -2947,6 +3013,8 @@ def main():
         test_single_quoted_attributes(tmp)
         test_single_quoted_gravity_and_fix(tmp)
         test_rtl_drawable_dirs(tmp)
+        test_symmetry_covered_by_modern_pair(tmp)
+        test_symmetry_partial_modern_is_not_coverage(tmp)
         test_hardcoded_gravity(tmp)
         test_gravity_compound_token(tmp)
         test_lint_fix_gravity(tmp)

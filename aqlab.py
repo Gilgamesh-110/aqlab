@@ -1947,12 +1947,14 @@ def symmetry_problems(proj):
     from the *same* view, and a file with paddingLeft on one row and paddingRight
     on another is not symmetric in any useful sense.
 
-    left/right and start/end are independent pairs, and an element carrying both
-    spellings is not asymmetric — that is the correct shape when minSdk is below
-    17, where start/end are ignored on old platforms. Measured on a real APK: an
-    ImageView with paddingLeft+paddingStart and marginRight+marginEnd was
-    reported twice before this, and duplicate warnings are how a check gets
-    ignored. Within one spelling, a side without its partner is the real finding.
+    left/right and start/end are independent pairs. Within one spelling, a side
+    without its partner is the finding — unless the *other* spelling covers both
+    of that pair's sides. Measured on a real APK: `paddingLeft`+`paddingStart`
+    +`paddingEnd` is Material's minSdk-era shape, and reporting it was a false
+    positive on all ten of that APK's symmetry rows (minSdkVersion 26, where
+    start/end are always honoured). The reverse is not true: `paddingLeft`+
+    `paddingRight` alone is still reported, because `paddingStart`/`paddingEnd`
+    are what a flip actually needs.
     """
     res = Path(proj) / "res"
     if not res.is_dir():
@@ -1972,12 +1974,28 @@ def symmetry_problems(proj):
             for a in re.finditer(
                     r"\b(?:android:)?([\w.]+)\s*=\s*[\x22\x27](.*?)[\x22\x27]", body):
                 have[a.group(1)] = a.group(2)
+            # A physical pair is covered by the modern pair: `paddingLeft` with
+            # both `paddingStart` and `paddingEnd` needs no `paddingRight` on a
+            # device that honours start/end. Measured on the real APK: all ten of
+            # its symmetry rows are that shape (minSdkVersion 26), so every one of
+            # them was a false positive.
+            # `paddingStart`+`paddingEnd` present means the physical side has a
+            # working modern twin: pair the spellings by their kind word.
+            covered = set()
+            for phys_l, phys_r, kind in SYMMETRY_PAIRS:
+                mod = "layout_margin" if kind == "margin" else kind
+                if (mod + "Start") in have and (mod + "End") in have:
+                    covered.add(phys_l)
+                    covered.add(phys_r)
             for left, right, _kind in SYMMETRY_PAIRS:
-                # both spellings of the same pair covered -> nothing to say
                 if left in have and right not in have:
+                    if left in covered:
+                        continue
                     found.append((f.relative_to(proj).as_posix(), tag, left, right,
                                   have[left]))
                 elif right in have and left not in have:
+                    if right in covered:
+                        continue
                     found.append((f.relative_to(proj).as_posix(), tag, right, left,
                                   have[right]))
     return found
