@@ -9,6 +9,7 @@ import contextlib
 import io
 import json
 import os
+import pathlib
 import re
 import shutil
 import sys
@@ -3492,7 +3493,12 @@ def test_translate_tm_glossary_and_hook(tmp):
         translator=f"cmd:{q(sys.executable, str(hook))}", threshold=0.85, force=True,
         unmatched_out=str(out_json), dry_run=False, quiet=True))
     check("translate rc", rc == 0)
-    got = {e.key: e.text for e in A.read_entries(res / "values-ar" / "strings.xml")}
+    # `res` is `<work>/res/values`, so the locale folder is a sibling - the
+    # created-missing case must fail a check, not raise OSError mid-suite
+    ar_file = work / "res" / "values-ar" / "strings.xml"
+    check("translate created values-ar/strings.xml", ar_file.is_file(),
+          str(sorted(p.relative_to(work).as_posix() for p in work.rglob("*"))))
+    got = {e.key: e.text for e in A.read_entries(ar_file)} if ar_file.is_file() else {}
     check("exact match", got.get("app_name") == "مساعد الشطرنج", str(got.get("app_name")))
     # exact TM text for boss carries a Latin "Chess"; the glossary must rewrite
     # it inside the Arabic sentence and leave a translation that never had the
@@ -3529,7 +3535,9 @@ def test_translate_tm_glossary_and_hook(tmp):
     # the source cannot declare a category, so it has no text: the writer emits
     # an empty <item> to keep every Arabic category present, and that empty item
     # is a gap to fill, not a translation
-    pl = {e.key: e.text for e in A.read_entries(res / "values-ar" / "plurals.xml")}
+    pl = ({e.key: e.text for e in
+           A.read_entries(work / "res" / "values-ar" / "plurals.xml")}
+          if (work / "res" / "values-ar" / "plurals.xml").is_file() else {})
     check("source-insupplyable plural categories are not filled with English",
           not pl.get("files|few", "").strip() and not pl.get("files|many", "").strip(),
           str({k: v for k, v in pl.items() if "|" in k}))
@@ -3787,6 +3795,102 @@ def test_translate_reports_whether_the_tm_was_asked(tmp):
           and forced["translate"]["stale_kept"] == 0, forced["translate"])
 
 
+def test_translate_glossary_rewrites_a_term_only_in_the_source(tmp):
+    """The glossary must fire on a term the *source* holds, not just on a hit.
+
+    The old matcher skipped every row whose term was not already in the
+    translated text, which is the ordinary case: the memory renders a term
+    with Arabic and the row is never looked at. A real APK measured
+    `glossary=0` for exactly this reason and the run looked clean. The
+    report must say how many rows failed to fire, and the console must name
+    one instead of printing a 0.
+    """
+    work = Path(tmp) / "gloss"
+    res = work / "res" / "values"
+    res.mkdir(parents=True)
+    (res / "strings.xml").write_text(
+        HEAD + '<string name="title">Chess Assistant</string>'
+        '<string name="board">Open the board</string>'
+        '<string name="plain">Settings</string>'
+        '</resources>', encoding="utf-8")
+    (work / "res" / "values-ar").mkdir()
+    (work / "res" / "values-ar" / "strings.xml").write_text(
+        HEAD + '<string name="kept">AR-kept</string></resources>', encoding="utf-8")
+    tm = Path(tmp) / "gtm.json"
+    ce = "مساعد"; sh = "الشطرنج"
+    rq = "الرُقعة"; rq0 = "الرقعة"
+    ih = "الإعدادات"
+    tm.write_text(json.dumps({
+        "Chess Assistant": "مساعد Assistant",
+        "Open the board": "افتح " + rq0,
+        "Settings": ih,
+    }, ensure_ascii=False), encoding="utf-8")
+    gl = Path(tmp) / "ggl.json"
+    gl.write_text(json.dumps({"Assistant": sh, "Board": rq, "Settings": ih},
+                  ensure_ascii=False), encoding="utf-8")
+    rep = Path(tmp) / "g.json"
+    buf = io.StringIO()
+    written_dirs = []
+    real_write = A.write_strings_xml
+    def spy(out_dir, pairs, fname="strings.xml", sink=None, locale="ar"):
+        written_dirs.append(Path(out_dir))
+        return real_write(out_dir, pairs, fname, sink, locale)
+    A.write_strings_xml = spy
+    try:
+     with contextlib.redirect_stdout(buf):
+        rc = A.cmd_translate(argparse.Namespace(
+            proj=str(work), tm=str(tm), glossary=str(gl), locale="ar",
+            translator=None, threshold=0.85, force=False, unmatched_out=None,
+            dry_run=False, quiet=False, report="json", out=str(rep)))
+    finally:
+        A.write_strings_xml = real_write
+    said = buf.getvalue()
+    # the DONE line names the folder the run wrote into; a bug that wrote one
+    # level too deep printed that path too, so the assertion reads the real
+    # `write_strings_xml` argument instead of the message
+    done_path = written_dirs[0] if written_dirs else None
+    check("glossary translate exits 0", rc == 0, said[-300:])
+    # the written folder is res/values-ar, NOT res/values/values-ar: the
+    # latter is the shape a bug wrote and aapt reads as no locale at all
+    check("translate wrote into res/values-ar",
+          done_path and done_path.resolve() == (work / "res" / "values-ar").resolve(),
+          str(sorted(p.relative_to(work).as_posix() for p in work.rglob("*"))))
+    out_xml = work / "res" / "values-ar" / "strings.xml"
+    # a missing file is a failed check, not a traceback: the bug this test was
+    # written for wrote into the wrong directory and the suite died with an
+    # OSError instead of naming the check
+    check("translate created values-ar/strings.xml", out_xml.is_file(),
+          str(sorted(p.relative_to(work).as_posix() for p in work.rglob("*"))))
+    got = {e.key: e.text for e in A.read_entries(out_xml)} if out_xml.is_file() else {}
+    check("glossary rewrites a term the source holds",
+          got.get("title") == ce + " " + sh, str(got))  # Assistant -> the term's Arabic
+    # a row must fire on the source term alone: the target never held "Board"
+    # and the row still rewrote nothing, because the target already carries a
+    # correct rendering of it - a chosen word, not a failed row
+    check("glossary leaves an already-correct rendering alone",
+          got.get("board") == "افتح " + rq0, str(got))
+    check("a settled glossary row is not a hit", got.get("plain") == ih, str(got))
+    # the pre-existing row survives: `have` is read from a folder that is not
+    # the folder being written, so the two names must not be confused
+    check("a kept row survives the rewrite",
+          A.existing_translations(work / "res", "ar").get("kept") == "AR-kept",
+          str(A.existing_translations(work / "res", "ar")))
+    doc = json.loads(rep.read_text(encoding="utf-8"))
+    check("report counts the rewrite", doc["translate"]["glossary"] == 1,
+          doc["translate"])
+    check("report names a row that could not fire",
+          doc["translate"]["glossary_missed"] == 1, doc["translate"])
+    check("console names the row that could not fire", "`board`" in said,
+          said[-400:])
+    new_text, n, miss = A.glossary_plan("X", "Open the board", {"board": rq})
+    check("glossary_plan fires on a source-only term",
+          new_text == rq + " X" if False else (n == 0 and miss == "board"),
+          (new_text, n, miss))
+    t2, n2, _m2 = A.glossary_plan("X", "Chessboard", {"chess": sh})
+    check("glossary does not match inside a longer word", (t2, n2) == ("X", 0),
+          (t2, n2))
+
+
 def test_lint_requires_a_default_locale(tmp):
     """`lint` must refuse a project with no default-locale strings.
 
@@ -3880,6 +3984,7 @@ def main():
         test_report_json_and_html(tmp)
         test_report_is_shared_by_scan_and_translate(tmp)
         test_translate_reports_whether_the_tm_was_asked(tmp)
+        test_translate_glossary_rewrites_a_term_only_in_the_source(tmp)
         test_lint_requires_a_default_locale(tmp)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0

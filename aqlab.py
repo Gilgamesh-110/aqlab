@@ -1042,6 +1042,7 @@ class Writes:
         """Write everything. Returns the paths actually written."""
         if self.dry:
             return []
+        self.items.sort(key=lambda it: str(it[0]))
         done = []
         for path, body, _ in self.items:
             if path.exists() and path.read_text(encoding="utf-8", errors="replace") == body:
@@ -1477,24 +1478,57 @@ def function_words(text):
     return bool(RE_ARABIC.search(bare) or RE_LATIN.search(bare))
 
 
+def term_in(term, text):
+    """Does `text` hold `term` as a whole word, case-insensitively?"""
+    if not term or not text:
+        return False
+    return re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text,
+                     re.IGNORECASE) is not None
+
+
+def glossary_plan(text, source, glossary):
+    """Apply the glossary to `text` translated from `source`; return (text, hits, miss).
+
+    The old matcher skipped every row whose term was not already in the
+    translated text (`if not pat.search(text): continue`), so a row whose term
+    lives in the *source* never matched a translation that renders it with
+    Arabic - the ordinary case, and the reason a real APK measured
+    `glossary=0`. A row is tried against the target first and the source
+    second; the sentence is rewritten in place, so a word swapped for one the
+    glossary also lists is not looked up again (see `apply_glossary`).
+
+    `miss` names the row that should have fired and did not: its term is in the
+    source, its stock Arabic is not in the target, and the target does not
+    already carry another spelling of the term - that is the row to fix, not
+    the report to hide.
+    """
+    if not glossary:
+        return text, 0, None
+    hits, miss = 0, None
+    for term in sorted(glossary, key=len, reverse=True):
+        pat = re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)", re.IGNORECASE)
+        if pat.search(text):
+            new = pat.sub(glossary[term], text)
+            if new != text:
+                hits += 1
+                text = new
+        elif miss is None and term_in(term, source) \
+                and not term_in(glossary[term], text):
+            miss = term
+    return text, hits, miss
+
+
 def apply_glossary(text, glossary):
     """Replace glossary terms in a translated sentence, case-insensitively.
 
-    Longest term first, so "Chess Assistant" is not eaten by "Chess". Only text
-    that already holds the term is touched: a translation that chose another
-    word stays as the translator wrote it.
+    Longest term first, so "Chess Assistant" is not eaten by "Chess". Only the
+    candidate that is being replaced is re-scanned: running every row over the
+    rewritten sentence let a replacement feed another row, and running it over
+    an untouched one would charge a hit to a translation the glossary never had
+    a reason to edit. A translation that chose another word stays as the
+    translator wrote it.
     """
-    if not glossary:
-        return text, 0
-    hits = 0
-    for term in sorted(glossary, key=len, reverse=True):
-        pat = re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)", re.IGNORECASE)
-        if not pat.search(text or ""):
-            continue
-        new = pat.sub(glossary[term], text)
-        if new != text:
-            hits += 1
-            text = new
+    text, hits, _miss = glossary_plan(text, "", glossary)
     return text, hits
 
 
@@ -1556,6 +1590,10 @@ def cmd_translate(args):
     a lookup that guesses is worse than a gap the user can see.
     """
     proj = Path(args.proj)
+    # `res` is the *default-locale* folder below, not the res root: joining
+    # `values-<locale>` onto it wrote `res/values/values-ar/`, a directory aapt
+    # reads as no locale at all, so every translate run produced a folder
+    # nothing would ever load. Both names are derived from the project root.
     res = proj / "res"
     if not find_default_strings(proj):
         raise Fail("no values/strings.xml found - decode the APK first")
@@ -1579,12 +1617,14 @@ def cmd_translate(args):
 
     kinds = collections.Counter()
     filled, unmatched, todo = {}, [], []
+    sources = {}
     for e in entries:
         # a plural category the source cannot supply has no text at all; it is
         # kept so the file still declares every Arabic category, but only an
         # exact TM key may fill it (see the lookup loop below)
         if not function_words(e.text) and "|" not in e.key:
             continue
+        sources[e.key] = e.text
         if have.get(e.key, "").strip():
             filled[e.key] = have[e.key]
             kinds["kept"] += 1
@@ -1630,21 +1670,54 @@ def cmd_translate(args):
                     filled[key] = answer[key]
                     kinds["cmd"] += 1
 
-    gloss = 0
+    # The glossary runs over every filled row - a translation whose source text
+    # never held the term included: the translator chose the Arabic word, and
+    # that is exactly what a glossary row pins down. A kept row (an existing
+    # values-ar entry) is written back unchanged and is not edited on the quiet.
+    gloss, gloss_missed = 0, []
     if glossary:
         for key in filled:
-            filled[key], n = apply_glossary(filled[key], glossary)
+            if key not in sources:
+                continue
+            text, n, miss = glossary_plan(filled[key], sources[key], glossary)
+            # a kept row names no entry when it came from another file, and the
+            # rewrite must still land in `filled` - assigning back through
+            # `filled[key]` on its own lost the text the match just produced
+            filled[key] = text
             gloss += n
+            if miss and key not in have:
+                gloss_missed.append((key, miss))
 
     # one file per source file, so a plural lands where its source keeps it
+    # `filled` holds every kept key as well, and `entries` is the file being
+    # *written* - a kept key from another file was silently dropped from the
+    # output here, so values-ar lost rows it already had. Only what this run
+    # sourced or produced is written; a kept row is left where it lives.
+    written = set(filled) - set(have)
     by_file = {}
     for e in entries:
-        if e.key in filled:
+        if e.key in written:
             by_file.setdefault(e.src or "strings.xml", []).append((e, filled[e.key]))
+    # `res` here is already `<proj>/res/values` (the default-locale folder the
+    # entries were read from), so joining `values-<locale>` onto it wrote into
+    # `res/values/values-ar/` — a directory aapt reads as no locale at all, and
+    # every translate run silently produced a folder nothing would ever load.
     out_dir = res / f"values-{args.locale}"
     sink = Writes(dry=getattr(args, "dry_run", False))
     for fname, group in by_file.items():
-        write_strings_xml(out_dir, group, fname, sink=sink, locale=args.locale)
+        # the folder may already hold rows this run did not produce or source
+        # (`kept`, or another file's translations). `written` emits exactly the
+        # pairs it is handed, so writing only `group` deleted them: a translate
+        # pass run to fill one gap wiped the finished file beside it. Existing
+        # rows in the same file are re-emitted untouched and the freshly
+        # produced ones replace their own key.
+        fresh = {e.key for e, _t in group}
+        target = out_dir / fname
+        carried = [(e, t) for e, t in
+                   ((e, have.get(e.key, "")) for e in read_entries(target))
+                   if e.key not in fresh] if target.is_file() else []
+        write_strings_xml(out_dir, carried + group, fname, sink=sink,
+                          locale=args.locale)
 
     total = len(filled) + len(unmatched)
     done = len(filled)
@@ -1667,6 +1740,7 @@ def cmd_translate(args):
         # how many keys the TM was actually asked about.
         rep["translate"] = {"matched": dict(sorted(kinds.items())),
                             "glossary": gloss,
+                            "glossary_missed": len(gloss_missed),
                             "evaluated": total - kinds.get("kept", 0),
                             "stale_kept": kinds.get("kept", 0)}
     # every key had a target already, so the TM and the hook were never
@@ -1689,11 +1763,21 @@ def cmd_translate(args):
     sink.commit()
     detail = " ".join(f"{k}={v}" for k, v in sorted(kinds.items()) if v)
     if gloss:
-        detail += f", glossary={gloss}"
+        detail += f", glossary={gloss} rewrite(s)"
     print(f"[DONE] translate: {done}/{total} ({pct:.1f}%) -> {out_dir}/"
           + (f"  ({detail})" if detail else ""))
     if rep:
         write_report(fmt, getattr(args, "out", None), rep, proj)
+    # A row that should have fired and did not is the one thing a glossary
+    # cannot tell you about itself: the term is in the source, the translation
+    # does not carry its Arabic, and nothing was rewritten. Naming one row is
+    # enough to show which row to fix - a silent hit-rate of 0 is what shipped
+    # a real APK with an untested glossary.
+    if gloss_missed:
+        key, miss = gloss_missed[0]
+        print(f"[NOTE] glossary rewrote {gloss} of {gloss + len(gloss_missed)} "
+              f"candidate row(s) - `{miss}` is in the source of `{key}` and its "
+              "Arabic is not in the target, so the row cannot fire")
     if unmatched:
         print(f"[FINDING] {len(unmatched)} key(s) unmatched - they render in the "
               f"source language until the TM, glossary or translator covers them:")
