@@ -146,3 +146,22 @@ Real APK (`C:/tmp/symdec`): `lint --jobs 1|4|8` byte-identical output,
 rows. Timing on this 84 MB project is flat (1.06s serial vs 10.19s at `--jobs 8`)
 — spawn cost dominates 200 small files, which is why the floor and the docs say
 `--jobs` is for big trees, not a default.
+
+## Round 39 — report: schema 1 pinned to a fixture and to the builder
+
+`--report json` shipped in B2 without anything stopping the shape from drifting:
+the schema number was written at the top of `build_report` and read by nobody.
+It is now `REPORT_KEYS` (a frozen set beside the number), asserted against the
+dict `build_report` actually returns, refused by `write_report` when a caller
+hands it a report of another schema (a consumer keys off the number, and a
+schema-2 file written by a schema-1 build is worse than a failed run). The
+fixture `tests/fixtures/report-v1.json` is small enough to vendor: a real lint
+report is 715 findings.
+
+Tests 573->579. `test_report_schema_fixture` round-trips the fixture through
+`build_report` and compares the whole dict, not just the key set — otherwise a
+value change (a percent rounded differently) passes both the fixture and the
+real-run test while breaking every consumer. Three mutations caught: the
+builder's key assertion off, an extra key on the returned dict, the stale-schema
+refusal off. Real APK (`C:/tmp/symdec`): schema 1, keys exactly `REPORT_KEYS`,
+0 errors / 80 warnings / 635 infos, 715 findings over 5 rules.

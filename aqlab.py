@@ -3320,6 +3320,11 @@ def cmd_lint(args):
 
 
 REPORT_SCHEMA = 1
+# Pinned next to the schema number, not derived from `build_report`: the fixture
+# is what a consumer codes against, and a key added to the builder without a
+# schema bump must break a test, not silently widen the contract.
+REPORT_KEYS = frozenset({"schema", "tool", "command", "project", "locale",
+                         "coverage", "totals", "rules", "findings"})
 
 
 def build_report(proj, locale, cov, covered, total, per_file, issues, errors,
@@ -3338,7 +3343,7 @@ def build_report(proj, locale, cov, covered, total, per_file, issues, errors,
         d = by_rule.setdefault(row["rule"], {"rule": row["rule"],
                                              "error": 0, "warn": 0, "info": 0})
         d[row["level"]] += 1
-    return {
+    rep = {
         "schema": REPORT_SCHEMA,
         "tool": {"name": "aqlab", "version": __version__},
         # which subcommand produced the file: one schema, three producers, and
@@ -3360,6 +3365,11 @@ def build_report(proj, locale, cov, covered, total, per_file, issues, errors,
         "rules": [by_rule[k] for k in sorted(by_rule)],
         "findings": rows,
     }
+    # The published shape and the built one are the same set: a consumer that
+    # reads this file keys off the top level, so a key that exists on one side
+    # only is a schema change, not an internal detail.
+    assert set(rep) == REPORT_KEYS, set(rep) ^ REPORT_KEYS
+    return rep
 
 
 def _report_html(rep):
@@ -3404,6 +3414,9 @@ def write_report(fmt, out, rep, proj):
     state could not serve them.
     """
     if fmt == "json":
+        if rep.get("schema") != REPORT_SCHEMA:
+            raise Fail(f"refusing to write a schema {rep.get('schema')!r} report "
+                       f"(this build writes schema {REPORT_SCHEMA})")
         text, suffix = json.dumps(rep, indent=2, ensure_ascii=False), ".json"
     elif fmt == "html":
         text, suffix = _report_html(rep), ".html"

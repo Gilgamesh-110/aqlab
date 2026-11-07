@@ -3821,6 +3821,62 @@ def test_report_json_and_html(tmp):
 
 
 
+def test_report_schema_fixture(tmp):
+    """The v1 shape is a fixture a consumer codes against, not a moving target.
+
+    `test_report_json_and_html` proves a real run *has* the documented keys; this
+    one pins the keys themselves, so a key added to `build_report` without a
+    schema bump fails here instead of reaching a release. The fixture is also the
+    example CI vendors, therefore it must be exactly what `build_report` emits
+    for the same input — round-tripping it through the builder is the check.
+    """
+    fixture = json.loads((Path(A.__file__).resolve().parent / "tests" / "fixtures"
+                          / "report-v1.json").read_text(encoding="utf-8"))
+    check("fixture declares the live schema", fixture["schema"] == A.REPORT_SCHEMA,
+          fixture.get("schema"))
+    # `REPORT_KEYS` is the contract; the builder is asserted against it inside
+    # `build_report` itself, so a key added there without a bump trips this run
+    # even when nothing here compares sets.
+    check("fixture keys are exactly REPORT_KEYS", set(fixture) == set(A.REPORT_KEYS),
+          set(fixture) ^ set(A.REPORT_KEYS))
+
+    rep = A.build_report(Path(tmp) / "fixture", "ar", 50.0, 1, 2,
+                         {"strings.xml": (1, 2)},
+                         [("error", "strings.xml:a", "bare `%` in `a`", "format"),
+                          ("warn", "strings.xml:b", "untranslated `b`", "translation")],
+                         1, command="lint", name="fixture")
+    rep["tool"]["version"] = "0.0.0"
+    check("builder output matches the fixture", rep == fixture,
+          json.dumps({k: (rep.get(k), fixture.get(k)) for k in set(rep) | set(fixture)
+                      if rep.get(k) != fixture.get(k)}, ensure_ascii=False)[:600])
+
+    # The builder's own guard, exercised the way a schema change would trip it:
+    # a new key on the published set must not slip through `build_report`.
+    live = A.REPORT_KEYS | {"extra"}
+    A.REPORT_KEYS = live
+    try:
+        A.build_report(Path(tmp) / "fixture", "ar", 50.0, 1, 2,
+                       {"strings.xml": (1, 2)},
+                       [("error", "strings.xml:a", "bare `%` in `a`", "format"),
+                        ("warn", "strings.xml:b", "untranslated `b`", "translation")],
+                       1, command="lint", name="fixture")
+        check("builder refuses an unpinned key", False, "REPORT_KEYS drifted unnoticed")
+    except AssertionError as e:
+        check("builder refuses an unpinned key", "extra" in str(e), str(e))
+    finally:
+        A.REPORT_KEYS = frozenset(A.REPORT_KEYS - {"extra"})
+
+    # A stale schema must not reach disk: a consumer keys off the number.
+    bad = dict(fixture, schema=A.REPORT_SCHEMA + 1)
+    out = Path(tmp) / "stale.json"
+    try:
+        A.write_report("json", str(out), bad, Path(tmp))
+        check("stale schema refused", False, "a schema 2 report was written")
+    except A.Fail as e:
+        check("stale schema refused", "schema" in str(e), str(e))
+    check("stale schema wrote nothing", not out.exists())
+
+
 def test_report_is_shared_by_scan_and_translate(tmp):
     """One report shape from three commands.
 
@@ -4161,6 +4217,7 @@ def main():
         test_scan(proj)
         test_fixture_locale_qualifier(tmp)
         test_report_json_and_html(tmp)
+        test_report_schema_fixture(tmp)
         test_report_is_shared_by_scan_and_translate(tmp)
         test_translate_reports_whether_the_tm_was_asked(tmp)
         test_translate_glossary_rewrites_a_term_only_in_the_source(tmp)
