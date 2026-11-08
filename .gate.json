@@ -1,5 +1,5 @@
 {
-  "checks": 610,
+  "checks": 623,
   "errors": 0,
   "warnings": 82,
   "promoted": [
@@ -9,7 +9,10 @@
     "plural: identical-text warning compares the locale's own categories",
     "plural: every CLDR locale is linted, not 52 of 227",
     "plural: a region-split locale (pt_PT) gets its own categories",
-    "rtl: the RTL language list is CLDR's 258, not a typed ten"
+    "rtl: the RTL language list is CLDR's 258, not a typed ten",
+    "plural: the shipped table is CLDR's file, rebuilt and compared each run",
+    "plural: a locale with no CLDR row is reported as unchecked, not invented",
+    "lint: values-<locale> folder match is case-insensitive"
   ],
-  "updated": "2026-11-08T22:59:00"
+  "updated": "2026-11-08T23:29:25"
 }

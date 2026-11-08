@@ -290,3 +290,35 @@ equal to `plurals.xml`/`likelySubtags.xml` at generation time.
 Tests 603 -> 610, all six new ones mutation-tested: reverting `_plural_locale`
 to `_base` fails `b+sr+Latn qualifier resolves`, shrinking `RTL_LOCALES` to the
 old ten fails `rtl covers N'Ko…`. Real APK unchanged: 0 errors, 82 warnings.
+## Round 44 — BUILD: plural table is CLDR's file, not a hand-grouped literal
+
+Round 43 shipped `PLURAL_CATEGORIES` as a literal generated off-network and the
+generator was never committed, so the shipped table was unverifiable — and
+wrong in three rows when compared against CLDR's own `plurals.json`: `he` had no
+`many`, `vi` was given a `one` CLDR does not produce, `tg` was absent. Hand
+grouping is what produced all three (the same failure the `he` row had last
+round), so the fix is not another hand pass.
+
+The table is now keyed by category tuple (`PLURAL_CATEGORIES_BY_KIND`) with one
+row per distinct shape — 10 rows covering 224 CLDR locales — plus the five
+Android legacy qualifiers (`in`/`iw`/`ji`/`jw`/`tl`) mapped onto their modern
+row. `tools/cldr_tables.py` regenerates it from
+`tests/fixtures/cldr/plurals.json`, a 7 KB checked-in copy of CLDR core's
+`supplemental/plurals.json` cardinal rules (the evaluated form `.xml` rules
+expand to, so no rule parser and no network). `test_plural_table_matches_cldr`
+rebuilds the table from that fixture every run: mutation — deleting `'es'` from
+the `one/many/other` group fails with `differs on ['es']`.
+
+Two lint findings fixed in the same pass, both measured on a fixture:
+
+* A locale CLDR has no row for (`xx`, a typo) got "one, other is not a xx
+  plural category" on an ordinary file — a claim nothing supports. Worse, every
+  plural check is vacuous there, so the run read as clean. Now one `[NOTE] no
+  CLDR plural row for xx` and no invented verdict; a real locale (`he` with a
+  `zero`) still gets its category warning.
+* `values-{locale}*` was `glob`, case-sensitive on Linux/macOS, so
+  `--locale ar-rSA` reported a missing folder that was on disk. Now a
+  case-insensitive `iterdir` prefix match.
+
+Tests 610 -> 623, five new checks all mutation-tested (unguarded `unknown`
+list, dropped NOTE, glob restored). Real APK unchanged: 0 errors, 82 warnings.

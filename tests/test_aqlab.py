@@ -3310,6 +3310,123 @@ def test_plural_structure(tmp):
     check("no plural finding remains", "plurals/" not in buf.getvalue())
 
 
+def test_plural_table_matches_cldr():
+    """The shipped plural table is CLDR's, rebuilt from the checked-in copy.
+
+    Round 43 shipped the table as a literal and both times a row was typed it
+    was wrong — `he` had no `many`, `vi` was given a `one` CLDR does not have,
+    `tg` was missing outright. The table is only useful if a hand edit cannot
+    disagree with ICU, so this rebuilds it from
+    `tests/fixtures/cldr/plurals.json` and compares. Mutation: change any row
+    in `PLURAL_CATEGORIES_BY_KIND` (or the alias block) and this fails.
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    import cldr_tables
+    groups = cldr_tables.table()
+    expect = {loc: cats for cats, locs in groups.items() for loc in locs}
+    alias = {"in": "id", "iw": "he", "ji": "yi", "jw": "jv", "tl": "fil"}
+    for old, new in alias.items():
+        expect[old] = expect[new]
+    shipped = dict(A.PLURAL_CATEGORIES)
+    wrong = sorted(k for k in set(expect) | set(shipped)
+                   if tuple(expect.get(k, ())) != tuple(shipped.get(k, ())))
+    check("plural table is exactly CLDR plus Android's four legacy tags",
+          not wrong, f"differs on {wrong[:8]}")
+    check("cldr fixture really has the cardinal rules",
+          len(groups) >= 10 and sum(len(v) for v in groups.values()) > 200,
+          str(len(groups)))
+    # `und` is CLDR's "undetermined" and not an Android qualifier.
+    check("und is not a lintable locale", "und" not in shipped)
+    # The three rows that were wrong when typed.
+    check("he has many", A.plural_categories("he") == ("one", "two", "other"))
+    # `vi` gained a `one` rule in CLDR 48; before that it was `other`-only, and
+    # the typed table kept the old shape. Assert what the fixture says.
+    check("vi matches its own CLDR row",
+          A.plural_categories("vi") == tuple(
+              json.loads((ROOT / "tests" / "fixtures" / "cldr" / "plurals.json")
+                         .read_text(encoding="utf-8"))["cardinal"]["vi"]))
+    check("tg is a CLDR row", A.plural_categories("tg") == ("one", "other"))
+    check("gl has many", A.plural_categories("gl") == ("one", "many", "other"))
+    # Legacy Android qualifier resolves to the modern row's categories.
+    check("legacy in/iw resolve", A.plural_categories("in") == A.plural_categories("id")
+          and A.plural_categories("iw") == A.plural_categories("he"))
+
+
+def _wr(p, body):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+
+
+def _wr(p, body):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+
+
+DBL = chr(34)
+def test_unknown_locale_plural_is_not_faked(tmp):
+    """A locale CLDR has no row for must say so, not invent a category verdict.
+
+    `plurals/xx` with `one`/`other` used to produce "one, other is not a xx
+    plural category" - a claim nothing supports, fired on a perfectly ordinary
+    file, and it hid the real state: plurals are not checked at all. Mutation:
+    drop the `if not plural_categories(...)` NOTE or restore the unguarded
+    `unknown` list and one of these fails.
+    """
+    root = Path(tmp) / "nolocale"
+    body = ('<?xml version=@1.0@ encoding=@utf-8@?>@N<resources>@N'
+            '  <string name=@app_name@>Demo</string>@N'
+            '  <plurals name=@n_items@>@N'
+            '    <item quantity=@one@>%d item</item>@N'
+            '    <item quantity=@other@>%d items</item>@N'
+            '  </plurals>@N</resources>@N')
+    body = body.replace("@", DBL)
+    body = body.replace("@N", NL)
+    for d in ("values", "values-xx"):
+        _wr(root / "res" / d / "strings.xml", body)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="xx", verbose=False))
+    out = buf.getvalue()
+    check("an unknown locale says its plurals are unchecked",
+          "no CLDR plural row for `xx`" in out, out)
+    check("it does not invent a category verdict", "plural category" not in out, out)
+    he = ('<?xml version=@1.0@ encoding=@utf-8@?>@N<resources>@N'
+        '  <plurals name=@n_items@>@N'
+        '    <item quantity=@zero@>אפס</item>@N'
+        '    <item quantity=@one@>אחד</item>@N'
+        '    <item quantity=@other@>%d</item>@N'
+        '  </plurals>@N</resources>@N')
+    he = he.replace("@", DBL).replace("@N", NL)
+    _wr(root / "res" / "values-he" / "strings.xml", he)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="he", verbose=False))
+    check("a known locale still names the unused category",
+          "zero is not a he plural category" in buf.getvalue(), buf.getvalue())
+
+
+def test_locale_folder_match_is_case_insensitive(tmp):
+    """`--locale ar-rSA` must find `values-ar-rSA` whatever the caller's case.
+
+    `glob("values-{locale}*")` is case-sensitive on Linux and macOS, so a
+    mixed-case argument reported a missing translation folder that existed.
+    Mutation: put the glob back and this fails.
+    """
+    root = Path(tmp) / "casefold"
+    _wr(root / "res" / "values" / "strings.xml",
+        '<resources><string name=@a@>Item</string></resources>'.replace("@", DBL))
+    _wr(root / "res" / "values-ar-rSA" / "strings.xml",
+        '<resources><string name=@a@>عنصر</string></resources>'.replace("@", DBL))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        A.cmd_lint(argparse.Namespace(proj=str(root), locale="ar-RSA", verbose=False))
+    out = buf.getvalue()
+    check("a mixed-case locale argument finds its folder",
+          "no res/values-ar-RSA" not in out, out)
+    check("and the folder it found is the one on disk",
+          "lint res/values-ar-RSA" in out, out)
+
+
 def test_plural_file_roundtrip(tmp):
     """Plurals kept in their own values/plurals.xml must survive the whole loop.
 
@@ -4408,6 +4525,9 @@ def main():
         test_decode_refuses_container_ambiguity()
         test_all_unsigned_output_line()
         test_plural_structure(tmp)
+        test_plural_table_matches_cldr()
+        test_unknown_locale_plural_is_not_faked(tmp)
+        test_locale_folder_match_is_case_insensitive(tmp)
         test_plural_file_roundtrip(tmp)
         test_rtl_self_closing_application(tmp)
         test_scan_apk_supports_rtl(tmp)

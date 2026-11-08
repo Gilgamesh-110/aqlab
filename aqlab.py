@@ -479,246 +479,36 @@ def plural_range(locale, cat):
     """Count range hint for a category, in the target locale's own terms."""
     return PLURAL_RANGE_BY_LOCALE.get(_plural_locale(locale), PLURAL_RANGE).get(cat, PLURAL_RANGE.get(cat, "?"))
 
-# CLDR plural categories per locale, in CLDR order. Every row below was read
-# out of `babel` (CLDR-backed) on 2026-11-08 — see SCOUT.md round 42 — not
-# hand-typed from the chart, because a hand-typed row is a guess that later
-# demands a form the language never uses (the bidi mistake, again).
-# A locale with no row is not linted for plurals at all: the table is the only
-# source of "this language needs these forms", so adding a row can only ever
-# add checks, never change a verdict for a language already listed.
-PLURAL_CATEGORIES = {
-    "ar": ("zero", "one", "two", "few", "many", "other"),
-    "he": ("one", "two", "other"),
-    "fa": ("one", "other"),
-    "ur": ("one", "other"),
-    # other RTL locales, all two-category
-    "ckb": ("one", "other"), "ps": ("one", "other"), "sd": ("one", "other"),
-    "yi": ("one", "other"), "dv": ("one", "other"), "ug": ("one", "other"),
-    # Slavic and Baltic
-    "ru": ("one", "few", "many", "other"), "uk": ("one", "few", "many", "other"),
-    "be": ("one", "few", "many", "other"), "pl": ("one", "few", "many", "other"),
-    "cs": ("one", "few", "many", "other"), "sk": ("one", "few", "many", "other"),
-    "lt": ("one", "few", "many", "other"),
-    "hr": ("one", "few", "other"), "sr": ("one", "few", "other"),
-    "bs": ("one", "few", "other"),
-    "sl": ("one", "two", "few", "other"),
-    "lv": ("zero", "one", "other"),
-    # Romance and others
-    "ro": ("one", "few", "other"),
-    "mt": ("one", "two", "few", "many", "other"),
-    "fr": ("one", "many", "other"), "pt": ("one", "many", "other"),
-    "es": ("one", "many", "other"), "it": ("one", "many", "other"),
-    "ca": ("one", "many", "other"),
-    "is": ("one", "other"),
-    # Celtic — the only languages besides Arabic that use all six
-    "cy": ("zero", "one", "two", "few", "many", "other"),
-    "kw": ("zero", "one", "two", "few", "many", "other"),
-    "ga": ("one", "two", "few", "many", "other"),
-    "br": ("one", "two", "few", "many", "other"),
-    "gd": ("one", "two", "few", "other"),
-    # South Asian
-    "hi": ("one", "other"), "bn": ("one", "other"), "gu": ("one", "other"),
-    "kn": ("one", "other"), "pa": ("one", "other"), "as": ("one", "other"),
-    "si": ("one", "other"), "am": ("one", "other"), "zu": ("one", "other"),
-    "fil": ("one", "other"), "tr": ("one", "other"), "en": ("one", "other"),
-    # no distinct plural form at all
-    "zh": ("other",), "ja": ("other",), "ko": ("other",),
-    "id": ("other",), "ms": ("other",),
-    # Everything below was generated from CLDR release-48 plurals.xml on
-    # 2026-11-08 with `scratch/cldr_table.py`, grouped by category tuple so a
-    # whole row is one language family and a typo shows up as a lone member.
-    # Languages we had no row for were not linted for plurals at all, so an
-    # `ar`-shaped <plurals> in a `de` build (zero/one/two/few/many/other) was
-    # six warnings nobody received. CLDR spells the same language both ways
-    # (`in`/`id`, `iw`/`he`, `ji`/`yi`, `jw`/`jv`): the old code name is the
-    # Android resource qualifier, so both have to resolve.
-    # same CLDR categories ('other',)
-    "bm": ('other',),
-    "bo": ('other',),
-    "dz": ('other',),
-    "hnj": ('other',),
-    "ig": ('other',),
-    "ii": ('other',),
-    "in": ('other',),
-    "jbo": ('other',),
-    "jv": ('other',),
-    "jw": ('other',),
-    "kde": ('other',),
-    "kea": ('other',),
-    "km": ('other',),
-    "lkt": ('other',),
-    "lo": ('other',),
-    "my": ('other',),
-    "nqo": ('other',),
-    "osa": ('other',),
-    "root": ('other',),
-    "sah": ('other',),
-    "ses": ('other',),
-    "sg": ('other',),
-    "su": ('other',),
-    "th": ('other',),
-    "to": ('other',),
-    "tpi": ('other',),
-    "vi": ('other',),
-    "wo": ('other',),
-    "yo": ('other',),
-    "yue": ('other',),
-    # same CLDR categories ('one', 'other')
-    "af": ('one', 'other',),
-    "ak": ('one', 'other',),
-    "an": ('one', 'other',),
-    "asa": ('one', 'other',),
-    "ast": ('one', 'other',),
-    "az": ('one', 'other',),
-    "bal": ('one', 'other',),
-    "bem": ('one', 'other',),
-    "bez": ('one', 'other',),
-    "bg": ('one', 'other',),
-    "bho": ('one', 'other',),
-    "brx": ('one', 'other',),
-    "ce": ('one', 'other',),
-    "ceb": ('one', 'other',),
-    "cgg": ('one', 'other',),
-    "chr": ('one', 'other',),
-    "csw": ('one', 'other',),
-    "da": ('one', 'other',),
-    "de": ('one', 'other',),
-    "doi": ('one', 'other',),
-    "ee": ('one', 'other',),
-    "el": ('one', 'other',),
-    "eo": ('one', 'other',),
-    "et": ('one', 'other',),
-    "eu": ('one', 'other',),
-    "ff": ('one', 'other',),
-    "fi": ('one', 'other',),
-    "fo": ('one', 'other',),
-    "fur": ('one', 'other',),
-    "fy": ('one', 'other',),
-    "gl": ('one', 'other',),
-    "gsw": ('one', 'other',),
-    "guw": ('one', 'other',),
-    "ha": ('one', 'other',),
-    "haw": ('one', 'other',),
-    "hu": ('one', 'other',),
-    "hy": ('one', 'other',),
-    "ia": ('one', 'other',),
-    "ie": ('one', 'other',),
-    "io": ('one', 'other',),
-    "jgo": ('one', 'other',),
-    "ji": ('one', 'other',),
-    "jmc": ('one', 'other',),
-    "ka": ('one', 'other',),
-    "kab": ('one', 'other',),
-    "kaj": ('one', 'other',),
-    "kcg": ('one', 'other',),
-    "kk": ('one', 'other',),
-    "kkj": ('one', 'other',),
-    "kl": ('one', 'other',),
-    "kok": ('one', 'other',),
-    "kok_Latn": ('one', 'other',),
-    "ks": ('one', 'other',),
-    "ksb": ('one', 'other',),
-    "ku": ('one', 'other',),
-    "ky": ('one', 'other',),
-    "lb": ('one', 'other',),
-    "lg": ('one', 'other',),
-    "lij": ('one', 'other',),
-    "ln": ('one', 'other',),
-    "mas": ('one', 'other',),
-    "mg": ('one', 'other',),
-    "mgo": ('one', 'other',),
-    "mk": ('one', 'other',),
-    "ml": ('one', 'other',),
-    "mn": ('one', 'other',),
-    "mr": ('one', 'other',),
-    "nah": ('one', 'other',),
-    "nb": ('one', 'other',),
-    "nd": ('one', 'other',),
-    "ne": ('one', 'other',),
-    "nl": ('one', 'other',),
-    "nn": ('one', 'other',),
-    "nnh": ('one', 'other',),
-    "no": ('one', 'other',),
-    "nr": ('one', 'other',),
-    "nso": ('one', 'other',),
-    "ny": ('one', 'other',),
-    "nyn": ('one', 'other',),
-    "om": ('one', 'other',),
-    "or": ('one', 'other',),
-    "os": ('one', 'other',),
-    "pap": ('one', 'other',),
-    "pcm": ('one', 'other',),
-    "rm": ('one', 'other',),
-    "rof": ('one', 'other',),
-    "rwk": ('one', 'other',),
-    "saq": ('one', 'other',),
-    "sc": ('one', 'other',),
-    "sdh": ('one', 'other',),
-    "seh": ('one', 'other',),
-    "sn": ('one', 'other',),
-    "so": ('one', 'other',),
-    "sq": ('one', 'other',),
-    "ss": ('one', 'other',),
-    "ssy": ('one', 'other',),
-    "st": ('one', 'other',),
-    "sv": ('one', 'other',),
-    "sw": ('one', 'other',),
-    "syr": ('one', 'other',),
-    "ta": ('one', 'other',),
-    "te": ('one', 'other',),
-    "teo": ('one', 'other',),
-    "ti": ('one', 'other',),
-    "tig": ('one', 'other',),
-    "tk": ('one', 'other',),
-    "tl": ('one', 'other',),
-    "tn": ('one', 'other',),
-    "ts": ('one', 'other',),
-    "tzm": ('one', 'other',),
-    "uz": ('one', 'other',),
-    "ve": ('one', 'other',),
-    "vo": ('one', 'other',),
-    "vun": ('one', 'other',),
-    "wa": ('one', 'other',),
-    "wae": ('one', 'other',),
-    "xh": ('one', 'other',),
-    "xog": ('one', 'other',),
-    # `ars` (Najdi Arabic) is CLDR's only other six-category row and shares the
-    # Arabic shape; it was dropped by the grouping pass (its keys collided with
-    # `ar`'s row), so it is the one row here typed by hand.
-    "ars": ('zero', 'one', 'two', 'few', 'many', 'other',),
-    # same CLDR categories ('one', 'few', 'other')
-    "mo": ('one', 'few', 'other',),
-    "sh": ('one', 'few', 'other',),
-    "shi": ('one', 'few', 'other',),
-    # same CLDR categories ('one', 'many', 'other')
-    "lld": ('one', 'many', 'other',),
-    "pt_PT": ('one', 'many', 'other',),
-    "scn": ('one', 'many', 'other',),
-    "vec": ('one', 'many', 'other',),
-    # same CLDR categories ('one', 'two', 'other')
-    "iu": ('one', 'two', 'other',),
-    "iw": ('one', 'two', 'other',),
-    "naq": ('one', 'two', 'other',),
-    "sat": ('one', 'two', 'other',),
-    "se": ('one', 'two', 'other',),
-    "sma": ('one', 'two', 'other',),
-    "smi": ('one', 'two', 'other',),
-    "smj": ('one', 'two', 'other',),
-    "smn": ('one', 'two', 'other',),
-    "sms": ('one', 'two', 'other',),
-    # same CLDR categories ('zero', 'one', 'other')
-    "blo": ('zero', 'one', 'other',),
-    "cv": ('zero', 'one', 'other',),
-    "ksh": ('zero', 'one', 'other',),
-    "lag": ('zero', 'one', 'other',),
-    "prg": ('zero', 'one', 'other',),
-    # same CLDR categories ('one', 'two', 'few', 'other')
-    "dsb": ('one', 'two', 'few', 'other',),
-    "hsb": ('one', 'two', 'few', 'other',),
-    # same CLDR categories ('one', 'two', 'few', 'many', 'other')
-    "gv": ('one', 'two', 'few', 'many', 'other',),
-    "sgs": ('one', 'two', 'few', 'many', 'other',),
+# Every CLDR plural row, grouped by category tuple. Generated from CLDR release-48
+# `supplemental/plurals.json` — the same file ICU reads — by
+# `tools/cldr_tables.py`, which is re-run by `tests/test_aqlab.py` against a
+# checked-in copy of that file, so a hand edit or a stale row fails a check
+# instead of shipping. Indexed by tuple: one group is one row here, and a
+# language missing from every group is not linted for plurals at all.
+PLURAL_CATEGORIES_BY_KIND = {
+    ('zero', 'one', 'two', 'few', 'many', 'other'): ('ar', 'ars', 'cy', 'kw',),
+    ('one', 'two', 'few', 'many', 'other'): ('br', 'ga', 'gv', 'mt', 'sgs',),
+    ('one', 'few', 'many', 'other'): ('be', 'cs', 'lt', 'pl', 'ru', 'sk', 'uk',),
+    ('one', 'two', 'few', 'other'): ('dsb', 'gd', 'hsb', 'sl',),
+    ('zero', 'one', 'other'): ('blo', 'cv', 'ksh', 'lag', 'lv', 'prg',),
+    ('one', 'few', 'other'): ('bs', 'hr', 'mo', 'ro', 'sh', 'shi', 'sr',),
+    ('one', 'many', 'other'): ('ca', 'es', 'fr', 'gl', 'it', 'lld', 'pt', 'pt_PT', 'scn', 'vec',),
+    ('one', 'two', 'other'): ('he', 'iu', 'naq', 'sat', 'se', 'sma', 'smi', 'smj', 'smn', 'sms',),
+    ('one', 'other'): ('af', 'ak', 'am', 'an', 'as', 'asa', 'ast', 'az', 'bal', 'bem', 'bez', 'bg', 'bho', 'bn', 'brx', 'ce', 'ceb', 'cgg', 'chr', 'ckb', 'csw', 'da', 'de', 'doi', 'dv', 'ee', 'el', 'en', 'eo', 'et', 'eu', 'fa', 'ff', 'fi', 'fil', 'fo', 'fur', 'fy', 'gsw', 'gu', 'guw', 'ha', 'haw', 'hi', 'hu', 'hy', 'ia', 'ie', 'io', 'is', 'jgo', 'jmc', 'ka', 'kab', 'kaj', 'kcg', 'kk', 'kkj', 'kl', 'kn', 'kok', 'kok_Latn', 'ks', 'ksb', 'ku', 'ky', 'lb', 'lg', 'lij', 'ln', 'mas', 'mg', 'mgo', 'mk', 'ml', 'mn', 'mr', 'nah', 'nb', 'nd', 'ne', 'nl', 'nn', 'nnh', 'no', 'nr', 'nso', 'ny', 'nyn', 'om', 'or', 'os', 'pa', 'pap', 'pcm', 'ps', 'rm', 'rof', 'rwk', 'saq', 'sc', 'sd', 'sdh', 'seh', 'si', 'sn', 'so', 'sq', 'ss', 'ssy', 'st', 'sv', 'sw', 'syr', 'ta', 'te', 'teo', 'tg', 'ti', 'tig', 'tk', 'tl', 'tn', 'tr', 'ts', 'tzm', 'ug', 'ur', 'uz', 've', 'vi', 'vo', 'vun', 'wa', 'wae', 'xh', 'xog', 'yi', 'zu',),
+    ('other',): ('bm', 'bo', 'dz', 'hnj', 'id', 'ig', 'ii', 'ja', 'jbo', 'jv', 'jw', 'kde', 'kea', 'km', 'ko', 'lkt', 'lo', 'ms', 'my', 'nqo', 'osa', 'sah', 'ses', 'sg', 'su', 'th', 'to', 'tpi', 'wo', 'yo', 'yue', 'zh',),
 }
+# Android's resource qualifiers still spell four languages the way CLDR no longer
+# does (`in`/`id`, `iw`/`he`, `ji`/`yi`, `jw`/`jv`), and Android's own `b+` tags
+# use the modern one, so both have to resolve. The legacy alias is never in the
+# CLDR file, so it cannot be generated from it.
+# Android resource qualifiers and ICU's newer names both resolve: CLDR spells
+# `he` as `he` and Android's folders say `iw` (`in`/`id`, `ji`/`yi`, `jw`/`jv`).
+PLURAL_CATEGORIES = {k: t for t, ks in PLURAL_CATEGORIES_BY_KIND.items() for k in ks}
+for _alias, _now in (("in", "id"), ("iw", "he"), ("ji", "yi"), ("jw", "jv"),
+                     ("tl", "fil")):
+    PLURAL_CATEGORIES[_alias] = PLURAL_CATEGORIES[_now]
+del _alias, _now
+
 # The categories that carry the most counts, so missing ones are errors: for
 # Arabic `few` (3-10) and `many` (11-99); for Hebrew `many` (20, 30, …). `other`
 # always covers everything the named categories do not, so it is always required.
@@ -3397,7 +3187,14 @@ def cmd_lint(args):
     # reading only strings.xml silently skipped exactly the entries the plural
     # check exists to inspect. Region variants (values-ar-rSA) count as `ar` too.
     src = {e.key: e for e in read_locale_entries(res, ["values"]) if e.translatable}
-    ar_dirs = sorted(d.name for d in res.glob(f"values-{args.locale}*") if d.is_dir())
+    # Match on the `values-` prefix, not on `values-{locale}`: Android lowercases
+    # the qualifier it writes (`values-ar`, `values-b+sr+Latn`) but a caller may
+    # pass `ar-rSA`-style mixed case, and `glob("values-ar-rSA*")` is
+    # case-sensitive on Linux/macOS — it found nothing and lint reported a
+    # missing translation folder that was right there.
+    want = args.locale.lower()
+    ar_dirs = sorted(d.name for d in res.iterdir()
+                     if d.is_dir() and d.name.lower().startswith(f"values-{want}"))
     issues, errors = [], 0
 
     if not ar_dirs:
@@ -3613,6 +3410,14 @@ def cmd_lint(args):
     # are held back from the printed list: no fixer can repair one, and a
     # warning printed under `fixed:` reads as work the fixer declined.
     plural_mark = len(issues)
+    # A locale CLDR has no plural row for (or that we cannot resolve at all —
+    # `xx`, a typo) makes every plural check below vacuous: `plural_required`
+    # and `plural_categories` both return () so a <plurals> copied from English
+    # passes clean. Say so once rather than reporting a clean bill of health
+    # nobody earned.
+    if not plural_categories(args.locale):
+        print(f"[NOTE] no CLDR plural row for `{args.locale}` — plural forms in "
+              "this locale are not checked (the coverage and RTL rows still are)")
     ar_pl = by_plural(tr.values())
     for name in sorted(by_plural(src.values())):
         got = ar_pl.get(name)
@@ -3647,7 +3452,12 @@ def cmd_lint(args):
         # A category the locale does not use is not wrong to ship (aapt2 and
         # ICU both accept it; the count simply falls through to `other`), but it
         # is text nobody will ever see and the shape the source file suggested.
-        if unknown := [q for q in got if q not in plural_categories(args.locale)]:
+        # No row for the locale at all (typo, or a language CLDR has never
+        # described): "not a xx plural category" is a claim we cannot support,
+        # and it fired on every perfectly ordinary `one`/`other` file — the
+        # NOTE above already said plurals are unchecked here.
+        cats = plural_categories(args.locale)
+        if cats and (unknown := [q for q in got if q not in cats]):
             add("warn", label, f"{', '.join(sorted(unknown))} is not a "
                                f"{args.locale} plural category — those counts fall through "
                                "to `other`, so the form is never shown", "plurals")
