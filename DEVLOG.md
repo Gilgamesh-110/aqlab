@@ -178,3 +178,14 @@ ignore the rule. Fix in the rule, not the doc: both conditions now match against
 brand names (`Premium`, `Lichess`, `Chess.com`) still fire.
 Tests 592->595, mutation-tested both branches (revert the strip -> `pure
 placeholder is not called untranslated` fails).
+
+## Round 41 — phase A scout
+Five candidates recorded, none re-recorded from round 40. Two rejected outright
+(Stringlate is a 2019 GUI with no CLI or report schema; Android 16 adds no
+resource-level RTL surface). Three stay `pending`: pyicu (authoritative plural
+rules vs our hand-rolled CLDR table), deep_translator (could seed values-ar
+instead of leaving keys empty), lingua-py (offline detector that would let lint
+flag Latin text inside values-ar without a whitelist). Verified first that the
+obvious gap was already closed: `translatable="false"` and `formatted="false"`
+are handled, and the reference APK has zero of either, so they cannot be
+measured there. Tests unchanged 595, 0 errors / 82 warnings, gate untouched.
