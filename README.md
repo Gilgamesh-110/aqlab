@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="aqlab — Arabic &amp; RTL localization for Android APKs" width="100%">
+<img src="assets/banner-v2.svg" alt="aqlab — Arabic &amp; RTL localization for Android APKs. LTR layout becomes RTL in one command; verified on a real device with zero crashes." width="100%">
 
 **Flip any Android app to Arabic — RTL-correct — in one command.**
 
@@ -250,6 +250,31 @@ old attribute is **removed** instead of duplicated. That guard is the difference
 between a project that builds and one that dies inside `aapt2` with
 `error: duplicate attribute` — and it is why this works on AppCompat and Material
 layouts, which routinely carry both.
+
+### What `--fix` refuses to do, and why
+
+Two repairs were removed after measuring them on real APKs, not fixtures. Both
+looked like fixes and both changed what the app renders.
+
+**It will not invent a symmetric partner.** A `paddingLeft` with no
+`paddingRight` is not half a pair — it is an element parked against one edge on
+purpose. On the Material layouts of one APK the fixer added 27 attributes across
+16 files and every single one moved something: a `statusDot` carrying only
+`marginEnd=8` gained a `marginStart`, a Spinner carrying only `marginStart`
+gained a `marginEnd`. Android's own `RtlSymmetry` is a warning for exactly this
+reason and never auto-fixes it. The check still reports; `--fix` leaves it.
+
+**It will not strip a deliberate `ltr` pin.** `layoutDirection="ltr"` on an
+element with no physical attributes is a marker, not a redundant literal. On a
+media app the fixer removed it from the ExoPlayer control views, which would
+render play/pause/skip backwards under Arabic — the icons travel with the
+layout and only the pin holds them in playback order. Pins *over* physical
+attributes are still dropped and their attributes still migrate.
+
+Measured after both removals on two real APKs (1,043 layouts total): second
+`--fix` pass changes **0 files**, invented attributes **0**, deliberate pins
+stripped **0**, XML parses **100%**. One APK was then rebuilt, signed and
+installed on a device: 0 crashes, Arabic RTL intact.
 
 ## Bidi: what the linter does not claim
 
