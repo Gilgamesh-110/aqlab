@@ -50,8 +50,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never carried the demo terminal.
 - **The CLI description still read "Make an Android app Arabic".**
 
+- **The suite could not run on Python 3.9-3.12.** `read_text(newline=...)` and
+  `write_text(newline=...)` only exist from 3.13, so every CI leg below 3.13 died
+  with `TypeError: read_text() got an unexpected keyword argument 'newline'` while
+  a 3.14 dev box stayed green. `pyproject.toml` claims 3.9+, so the claim was
+  false for five commits and the README badge read `tests failing`. Both calls
+  are now `aqlab.read_text` / `aqlab.write_text`, which open the file directly, and
+  a check greps for the 3.13-only form so it cannot come back. This is the second
+  time a keyword that looked harmless broke an older interpreter; the check is
+  cheaper than installing five of them.
+
 ### Tests
-652 checks.
+653 checks.
 
 ## [Unreleased]
 

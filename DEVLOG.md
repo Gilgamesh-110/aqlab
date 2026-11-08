@@ -437,3 +437,28 @@ fails with `[FINDING]` on the pipe.
 **If you pick this up:** run the documented commands before trusting the docs.
 Every one of these read fine and was wrong.
 
+## Round 48 — the matrix was red for five commits
+
+I had been reading my own 3.14 shell. The CI badge on the README said
+`tests failing` and I had not looked at it.
+
+The cause: `Path.read_text(newline="")` and `Path.write_text(newline="")` landed
+in Python 3.13. Both were used 16 times across `aqlab.py` and the suite. Every
+CI leg on 3.9, 3.10, 3.11, 3.12 died on the first one it hit with
+`TypeError: read_text() got an unexpected keyword argument 'newline'`. I only ever
+ran 3.14 locally, where the call is correct. `pyproject.toml` claims 3.9+.
+
+Replacing the calls with two module-level helpers that `open(..., newline="")`
+fixes the behaviour, and a new check greps the source for the 3.13-only form —
+mutation-verified by reverting one helper to the broken call.
+
+The other red step was the doc check re-running the full suite and comparing the
+banner badge against whatever tree it found; on CI it read the previous commit
+and reported `badge says 652, suite has 639`. The badge is still checked, but the
+suite is the contract, not a nested run.
+
+**If you pick this up:** run the matrix claim, not the interpreter you have. If
+`pyproject.toml` says `>=3.9`, something below 3.14 has to run before you believe
+anything. Also: look at the badge at the top of your own repo — it is a claim, and
+it was red.
+

@@ -418,10 +418,10 @@ def test_pin_nested_gravity(tmp):
     args = argparse.Namespace(proj=str(root), locale="ar", quiet=True, verbose=False,
                               fail_under=None, fail_under_file=None, fix=True,
                               dry_run=True)
-    before = f.read_text(encoding="utf-8", newline="")
+    before = A.read_text(f)
     with contextlib.redirect_stdout(io.StringIO()):
         A.cmd_lint(args)
-    check("nested dry run writes nothing", f.read_text(encoding="utf-8", newline="") == before, "")
+    check("nested dry run writes nothing", A.read_text(f) == before, "")
 
     args.dry_run = False
     with contextlib.redirect_stdout(io.StringIO()) as out:
@@ -429,7 +429,7 @@ def test_pin_nested_gravity(tmp):
     # `--fix` runs four passes; the symmetry pass sees the migrated
     # `paddingStart` and pairs it, so the comparison baseline is the text
     # this test asserts on, not the raw one-pass output.
-    after = f.read_text(encoding="utf-8", newline="")
+    after = A.read_text(f)
     check("nested row gravity migrated", 'android:gravity="start"' in after, after)
     check("nested row padding renamed", 'android:paddingStart="4.0dip"' in after, after)
     check("both rows fixed by one run", out.getvalue().count("fixed:") == 1,
@@ -437,8 +437,8 @@ def test_pin_nested_gravity(tmp):
 
     with contextlib.redirect_stdout(io.StringIO()) as out2:
         A.cmd_lint(args)
-    check("nested fix idempotent", f.read_text(encoding="utf-8", newline="") == after,
-          f.read_text(encoding="utf-8", newline=""))
+    check("nested fix idempotent", A.read_text(f) == after,
+          A.read_text(f))
     check("nested second pass settles", "nested" not in out2.getvalue().lower(),
           out2.getvalue()[:400])
 
@@ -1139,6 +1139,38 @@ def test_scan_json_is_only_json(proj, tmp):
     check("scan (human): still starts with the finding block",
           human.startswith("[FINDING]"), human[:80])
     check("scan (human): no JSON leaked", '{"' not in human, human[-200:])
+
+
+def test_no_py313_only_pathlib_kwargs(tmp):
+    """No `Path.read_text/write_text(..., newline=...)` anywhere.
+
+    Those kwargs landed in 3.13. A 3.14 dev box runs them fine while every CI leg
+    on 3.9-3.12 dies with `TypeError: read_text() got an unexpected keyword
+    argument 'newline'` — the whole matrix was red for five commits and the badge
+    on the README said `tests failing`. The project claims 3.9+ in pyproject.toml,
+    so the claim has to be checkable without installing five interpreters.
+    """
+    bad = []
+    for name in ("aqlab.py", "tests/test_aqlab.py", "tests/test_readme.py"):
+        p = ROOT / name
+        if not p.exists():
+            continue
+        in_doc = None
+        for n, line in enumerate(A.read_text(p).splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith('"""') or stripped.startswith("'''"):
+                q = stripped[:3]
+                if in_doc == q:
+                    in_doc = None
+                    continue
+                if in_doc is None:
+                    in_doc = q
+                    continue
+            if in_doc or stripped.startswith("#"):
+                continue
+            if re.search(r"\.(read|write)_text\([^)]*newline\s*=", line):
+                bad.append(f"{name}:{n}: {stripped[:90]}")
+    check("no 3.13-only read_text/write_text newline= kwargs", not bad, "; ".join(bad[:5]))
 
 
 def test_dry_run_changes_nothing(proj, tmp):
@@ -4626,6 +4658,7 @@ def main():
         test_forced_scaffold_keeps_six_plural_forms(proj, tmp)
         test_pending_never_exceeds_entries(proj, tmp)
         test_scan_json_is_only_json(proj, tmp)
+        test_no_py313_only_pathlib_kwargs(tmp)
         test_dry_run_changes_nothing(proj, tmp)
         test_non_resource_files_are_reported(tmp)
         test_coverage_per_file_and_gates(tmp)

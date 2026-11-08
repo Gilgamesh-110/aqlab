@@ -664,7 +664,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). The test suite is plain asserts and runs
 anywhere:
 
 ```sh
-python tests/test_aqlab.py       # 652 checks, no framework, no network, no apktool
+python tests/test_aqlab.py       # 653 checks, no framework, no network, no apktool
 ```
 
 Most wanted: more vector-drawable mirroring cases, and locale files nobody has

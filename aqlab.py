@@ -46,6 +46,24 @@ __version__ = "0.2.0"
 # Unicode classes
 # --------------------------------------------------------------------------
 
+def read_text(p):
+    """Read a file with newlines preserved, on every supported Python.
+
+    `Path.read_text(newline=...)` only exists from 3.13, so the 3.9-3.12 CI legs
+    died with `TypeError: read_text() got an unexpected keyword argument
+    'newline'` — a failure invisible on a 3.14 dev box. Passing newline="" is what
+    stops universal-newline translation from rewriting the CRLFs an APK ships.
+    """
+    with open(p, "r", encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def write_text(p, text):
+    """Write preserving the caller's newlines exactly; see read_text()."""
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 RE_ARABIC = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]")
 RE_LATIN = re.compile(r"[A-Za-z]")
 RE_ANY_ALNUM = re.compile(r"[0-9A-Za-z\u0600-\u06FF\u0660-\u0669\u06F0-\u06F9]")
@@ -3884,7 +3902,7 @@ def fix_pin_local(proj, dry=False):
     for rel, wanted in sorted(broken.items()):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8", newline="")
+            txt = read_text(f)
         except OSError:
             continue
         # Two sources queue tags now, so the queue is not automatically in
@@ -3923,7 +3941,7 @@ def fix_pin_local(proj, dry=False):
         if done:
             out.append(txt[i:])
             if not dry:
-                f.write_text("".join(out), encoding="utf-8", newline="")
+                write_text(f, "".join(out))
             n += done
     return n
 
@@ -3971,7 +3989,7 @@ def fix_pin_nested(proj, dry=False):
     for rel, wanted in sorted(broken.items()):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8", newline="")
+            txt = read_text(f)
         except OSError:
             continue
         # Two rows in one file are reported separately but can sit in the same
@@ -4018,7 +4036,7 @@ def fix_pin_nested(proj, dry=False):
         if done:
             out.append(txt[i:])
             if not dry:
-                f.write_text("".join(out), encoding="utf-8", newline="")
+                write_text(f, "".join(out))
             n += done
     # The include target is a whole layout, not a row: it is not under the pin
     # at its own top level, so `direction_pins` never reports it there. Every
@@ -4027,13 +4045,13 @@ def fix_pin_nested(proj, dry=False):
     for rel in dict.fromkeys(pinned_includes):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8", newline="")
+            txt = read_text(f)
         except OSError:
             continue
         out, hits = rewrite_xml_attrs(txt)
         if out != txt:
             if not dry:
-                f.write_text(out, encoding="utf-8", newline="")
+                write_text(f, out)
             n += hits
     return n
 
@@ -4067,13 +4085,13 @@ def fix_gravity(proj, dry=False):
     for rel in sorted(todo):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8", newline="")
+            txt = read_text(f)
         except OSError:
             continue
         out, hits = gravity_fix(txt)
         if out != txt:
             if not dry:
-                f.write_text(out, encoding="utf-8", newline="")
+                write_text(f, out)
             n += hits
     return n
 
@@ -4096,7 +4114,7 @@ def fix_symmetry(proj, dry=False):
     for rel, wanted in sorted(broken.items()):
         f = Path(proj) / rel
         try:
-            txt = f.read_text(encoding="utf-8", newline="")
+            txt = read_text(f)
         except OSError:
             continue
         # Count only elements this file was reported for — each finding names one
@@ -4128,7 +4146,7 @@ def fix_symmetry(proj, dry=False):
             return whole[:head] + body + tail
         out = elem.sub(repl, txt)
         if out != txt and not dry:
-            f.write_text(out, encoding="utf-8", newline="")
+            write_text(f, out)
         n += done
     return n
 
