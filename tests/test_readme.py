@@ -109,7 +109,53 @@ def check_plural_table():
     return 0
 
 
+def check_banner_numbers():
+    """The banner's badges must not claim numbers the code no longer has.
+
+    The banner sat at '610 tests' while the suite was at 641, and it is the first
+    thing a visitor reads. A badge that drifts is a claim that drifts.
+    """
+    svg = (ROOT / "assets" / "banner-v3.svg").read_text(encoding="utf-8")
+    sys.path.insert(0, str(ROOT))
+    import aqlab
+
+    claims = {
+        "locales": (r">(\d+) locales<", len(aqlab.PLURAL_CATEGORIES)),
+        "RTL": (r">(\d+) RTL<", len(aqlab.RTL_LOCALES)),
+    }
+    bad = 0
+    for label, (pat, want) in claims.items():
+        m = re.search(pat, svg)
+        if not m:
+            print(f"[FAIL] banner-v3.svg: no '{label}' badge found")
+            bad += 1
+        elif int(m.group(1)) != want:
+            print(f"[FAIL] banner-v3.svg: {label} badge says {m.group(1)}, code says {want}")
+            bad += 1
+
+    m = re.search(r">(\d+) tests<", svg)
+    if not m:
+        print("[FAIL] banner-v3.svg: no tests badge found")
+        bad += 1
+    else:
+        out = subprocess.run([sys.executable, str(ROOT / "tests" / "test_aqlab.py")],
+                             capture_output=True, text=True, cwd=ROOT)
+        hit = re.search(r"(\d+) checks passed", out.stdout + out.stderr)
+        if not hit:
+            print("[FAIL] banner-v3.svg: could not count the suite to check the badge")
+            bad += 1
+        elif int(m.group(1)) != int(hit.group(1)):
+            print(f"[FAIL] banner-v3.svg: tests badge says {m.group(1)}, suite has {hit.group(1)}")
+            bad += 1
+
+    if bad:
+        return 1
+    print("[OK] banner badges match the code (locales, RTL, test count)")
+    return 0
+
+
 if __name__ == "__main__":
     rc = main() or 0
     rc |= check_plural_table() or 0
+    rc |= check_banner_numbers() or 0
     sys.exit(rc)
