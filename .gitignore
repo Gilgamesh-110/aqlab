@@ -28,3 +28,9 @@ build/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# scratch: one-off edit scripts and temp files from tooling runs
+_t*.py
+.hermes-tmp.*
+*.bak
+*.orig
