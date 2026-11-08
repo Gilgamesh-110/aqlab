@@ -1,0 +1,63 @@
+name: Pages
+
+# The landing page is a static folder with no build step -- publishing it needs
+# nothing but an artifact upload. Pushing it through Jekyll would run every file
+# in the repo through a template engine to produce the same bytes, and would fail
+# on the underscore paths the project already has.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make sure every asset the page references exists
+        run: |
+          python - <<'PY'
+          import re, pathlib, sys
+          html = pathlib.Path("site/index.html").read_text(encoding="utf-8")
+          refs = re.findall(r'(?:src|href)="([^"]+)"', html)
+          local = [r for r in refs if not r.startswith(("http", "#", "mailto:", "data:"))]
+          missing = [r for r in local if not (pathlib.Path("site") / r).exists()]
+          for r in sorted(set(local)):
+              print(("MISSING " if r in missing else "ok      ") + r)
+          if missing:
+              sys.exit(f"{len(missing)} asset(s) referenced but not present")
+          print(f"{len(set(local))} asset reference(s) all resolve")
+          PY
+
+      - name: No secrets in the published tree
+        run: |
+          if grep -rInE "gho_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY" site/; then
+            echo "::error::a credential-shaped string is in site/ -- refusing to publish"
+            exit 1
+          fi
+          echo "clean"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

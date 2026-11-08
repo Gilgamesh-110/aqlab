@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>aqlab — أي لغة، أي اتجاه، أمر واحد</title>
+<meta name="description" content="ترجم أي تطبيق أندرويد إلى أي لغة، مع عكس التخطيط صح. 227 لغة، 258 اتجاه من اليمين لليسار. أمر واحد.">
+<meta property="og:title" content="aqlab — أي لغة، أي اتجاه، أمر واحد">
+<meta property="og:description" content="ترجم أي تطبيق أندرويد إلى أي لغة مع عكس التخطيط الصحيح. 227 لغة، صفر اعتماديات.">
+<meta property="og:image" content="assets/banner-v3.png">
+<meta property="og:type" content="website">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<style>
+:root{
+  --bg:#0b0f14; --bg2:#11171f; --card:#151d27; --line:#22303f;
+  --fg:#e6edf3; --dim:#8b98a5; --dim2:#61707e;
+  --acc:#3fb950; --acc2:#58a6ff; --warn:#d29922; --err:#f85149;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:"Segoe UI",system-ui,-apple-system,"Noto Sans Arabic",sans-serif;
+  line-height:1.65; -webkit-font-smoothing:antialiased;
+}
+a{color:var(--acc2);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+
+/* ---------- hero ---------- */
+header{
+  position:relative; overflow:hidden;
+  background:radial-gradient(ellipse 70% 60% at 50% -20%,rgba(88,166,255,.13),transparent 70%);
+  border-bottom:1px solid var(--line); padding:52px 0 44px;
+}
+.hero{display:grid;grid-template-columns:1fr 260px;gap:40px;align-items:center}
+.logo{width:74px;height:74px;margin-bottom:18px;display:block}
+h1{font-size:clamp(30px,5vw,46px);line-height:1.15;letter-spacing:-.02em;font-weight:800}
+h1 .hi{color:var(--acc)}
+.lede{font-size:clamp(16px,2.1vw,19px);color:var(--dim);margin-top:14px;max-width:52ch}
+.lede b{color:var(--fg);font-weight:600}
+.install{
+  margin-top:26px;background:var(--card);border:1px solid var(--line);
+  border-radius:10px;padding:13px 16px;display:flex;align-items:center;
+  gap:12px;max-width:420px;font-family:var(--mono);font-size:15px;
+}
+.install .prompt{color:var(--acc);user-select:none}
+.install code{flex:1;overflow:auto;white-space:nowrap;direction:ltr;text-align:left}
+.copy{
+  background:#1f2937;border:1px solid var(--line);color:var(--dim);
+  border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer;
+  font-family:inherit;transition:.15s;flex:none;
+}
+.copy:hover{color:var(--fg);border-color:var(--dim2)}
+.copy.ok{color:var(--acc);border-color:var(--acc)}
+.heroimg{width:100%;border-radius:14px;border:1px solid var(--line);display:block}
+.hero-btns{justify-content:flex-start;margin-top:22px}
+.hero-btns .btn{padding:10px 20px;font-size:14px}
+.stats{display:flex;gap:26px;margin-top:26px;flex-wrap:wrap}
+.stat b{display:block;font-size:22px;font-weight:700;font-family:var(--mono)}
+.stat span{font-size:12.5px;color:var(--dim2)}
+
+/* ---------- sections ---------- */
+section{padding:56px 0;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+h2{font-size:clamp(21px,3vw,27px);font-weight:700;letter-spacing:-.01em;margin-bottom:8px}
+h2 .n{color:var(--dim2);font-family:var(--mono);font-size:.68em;margin-left:10px}
+.sub{color:var(--dim);margin-bottom:26px;max-width:66ch}
+
+/* ---------- steps ---------- */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.step{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+.step .num{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:27px;height:27px;border-radius:7px;background:#1c2b3d;
+  color:var(--acc2);font-family:var(--mono);font-size:13px;font-weight:700;
+  margin-bottom:12px;
+}
+.step h3{font-size:16px;margin-bottom:7px}
+.step p{font-size:14px;color:var(--dim)}
+.step code{
+  font-family:var(--mono);font-size:12.5px;background:#0d141c;
+  padding:2px 6px;border-radius:4px;color:#a5d6ff;direction:ltr;display:inline-block;
+}
+
+/* ---------- before / after ---------- */
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ba figure{border-radius:12px;overflow:hidden;border:1px solid var(--line);margin:0}
+.ba img{width:100%;display:block}
+.ba figcaption{
+  padding:11px 14px;font-size:13px;background:var(--card);
+  border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;
+}
+.ba .tag{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px;flex:none}
+.ba .bad{color:var(--err);background:rgba(248,81,73,.12)}
+.ba .good{color:var(--acc);background:rgba(63,185,80,.12)}
+
+/* ---------- terminal ---------- */
+.term{
+  background:#0d1117;border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;font-family:var(--mono);font-size:13.5px;
+}
+.term-bar{
+  background:#161b22;padding:9px 14px;display:flex;gap:7px;align-items:center;
+  border-bottom:1px solid var(--line);
+}
+.dot{width:11px;height:11px;border-radius:50%}
+.term-title{margin-right:auto;color:var(--dim2);font-size:11.5px;direction:ltr}
+.term pre{
+  padding:18px;overflow-x:auto;line-height:1.72;direction:ltr;text-align:left;
+  color:#c9d1d9;margin:0;font-size:12.5px;white-space:pre;min-width:0;
+}
+@media(min-width:640px){.term pre{font-size:13.5px}}
+.term .c{color:var(--acc)}
+.term .f{color:var(--acc2)}
+.term .d{color:var(--warn)}
+.term .e{color:var(--err)}
+.term .m{color:var(--dim2)}
+.term .w{color:var(--fg)}
+
+/* ---------- features ---------- */
+.feat{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.f{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:19px}
+.f .ic{font-size:19px;margin-bottom:10px;display:block}
+.f h3{font-size:14.5px;margin-bottom:6px}
+.f p{font-size:13.5px;color:var(--dim)}
+
+/* ---------- commands ---------- */
+.cmds{display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.cmd{
+  background:var(--card);display:grid;grid-template-columns:auto 1fr;
+  gap:16px;padding:13px 17px;align-items:baseline;
+}
+.cmd:hover{background:#182230}
+.cmd code{
+  font-family:var(--mono);font-size:13px;color:#a5d6ff;white-space:nowrap;
+  direction:ltr;text-align:left;
+}
+.cmd span{font-size:13.5px;color:var(--dim)}
+
+/* ---------- langs ---------- */
+.langs{display:flex;flex-wrap:wrap;gap:9px}
+.lang{
+  background:var(--card);border:1px solid var(--line);border-radius:8px;
+  padding:7px 13px;font-size:14px;display:flex;gap:9px;align-items:center;
+}
+.lang .dir{font-family:var(--mono);font-size:10.5px;color:var(--dim2)}
+
+/* ---------- faq ---------- */
+details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0;margin-bottom:9px}
+summary{padding:14px 17px;cursor:pointer;font-size:14.5px;font-weight:600;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"+";color:var(--acc2);font-family:var(--mono);margin-left:9px;display:inline-block}
+details[open] summary::before{content:"−"}
+details p{padding:0 17px 15px;font-size:13.5px;color:var(--dim)}
+
+/* ---------- cta ---------- */
+.cta{text-align:center;padding:56px 0 68px}
+.cta h2{margin-bottom:10px}
+.btns{display:flex;gap:11px;justify-content:center;margin-top:24px;flex-wrap:wrap}
+.btn{
+  padding:12px 24px;border-radius:9px;font-size:14.5px;font-weight:600;
+  display:inline-flex;align-items:center;gap:8px;transition:.15s;
+}
+.btn.p{background:var(--acc);color:#04140a}
+.btn.p:hover{background:#4ac95c;text-decoration:none}
+.btn.s{background:var(--card);color:var(--fg);border:1px solid var(--line)}
+.btn.s:hover{border-color:var(--dim2);text-decoration:none}
+
+footer{border-top:1px solid var(--line);padding:26px 0;font-size:13px;color:var(--dim2)}
+footer .row{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+
+@media(max-width:820px){
+  .hero{grid-template-columns:1fr;gap:0}
+  /* The banner is a screenshot of this very page's CLI -- on a phone it pushed
+     the H1 and the install line below the fold, so the first thing a visitor saw
+     was a picture instead of the sentence that explains the product. Order it
+     after the stats and hide it under 620px, where it costs a full scroll. */
+  .heroimg{order:2;margin-top:30px}
+  .logo{width:52px;height:52px;margin-bottom:12px}
+  header{padding:26px 0 30px}
+  .stats{gap:18px 26px;margin-top:20px}
+  section{padding:40px 0}
+}
+@media(max-width:620px){
+  .heroimg{display:none}
+  .steps,.feat{grid-template-columns:1fr}
+  .ba{grid-template-columns:1fr}
+  .cmd{grid-template-columns:1fr;gap:5px}
+  h1{font-size:30px}
+  .install{font-size:13px;padding:11px 13px}
+  .stat b{font-size:19px}
+}
+</style>
+</head>
+<body>
+
+<header>
+<div class="wrap hero">
+  <div>
+    <img class="logo" src="assets/logo.svg" alt="">
+    <h1>ترجم أي تطبيق أندرويد<br><span class="hi">أمر واحد.</span></h1>
+    <p class="lede">
+      نصوص، وتخطيط ينعكس صح، وملف APK موقّع جاهز. <b>أمر واحد.</b>
+    </p>
+
+    <div class="install">
+      <span class="prompt">$</span>
+      <code id="cmd">pip install aqlab</code>
+      <button class="copy" data-copy="pip install aqlab">نسخ</button>
+    </div>
+
+    <div class="btns hero-btns">
+      <a class="btn p" href="https://pypi.org/project/aqlab/">ثبّته</a>
+      <a class="btn s" href="https://github.com/Gilgamesh-110/aqlab">شوف الكود</a>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>227</b><span>لغة</span></div>
+      <div class="stat"><b>258</b><span>اتجاه RTL</span></div>
+      <div class="stat"><b>653</b><span>فحص</span></div>
+      <div class="stat"><b>0</b><span>اعتماديات</span></div>
+    </div>
+  </div>
+  <img class="heroimg" src="assets/banner-v3.png" alt="لقطة من الشريط التعريفي" loading="lazy">
+</div>
+</header>
+
+<!-- ============ المشكلة → الحل ============ -->
+<section>
+<div class="wrap">
+  <h2>شنو يتغيّر <span class="n">01</span></h2>
+  <p class="sub">
+    الترجمة لحالها ما تكفي. لو التخطيط ما انعكس، القائمة تبقى على اليسار والسهم يشير للجهة الغلط،
+    والتطبيق يبقى يحس إنه أجنبي. هذي نفس الشاشة قبل وبعد:
+  </p>
+
+  <div class="ba">
+    <figure>
+      <img src="assets/before-after.png" alt="مقارنة: تخطيط LTR قبل، وRTL بعد" loading="lazy">
+      <figcaption>
+        <span>نفس الشاشة بعد <code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">aqlab rtl</code></span>
+        <span class="tag good">16 سمة انعكست</span>
+      </figcaption>
+    </figure>
+    <figure>
+      <img src="assets/demo.png" alt="مخرجات الأداة في الطرفية" loading="lazy">
+      <figcaption>
+        <span>مخرجات حقيقية من شجرة 1426 نص</span>
+        <span class="tag good">0 كراش</span>
+      </figcaption>
+    </figure>
+  </div>
+</div>
+</section>
+
+<!-- ============ الفيديو / الطرفية ============ -->
+<section>
+<div class="wrap">
+  <h2>ثلاث أوامر، وخلص <span class="n">02</span></h2>
+  <p class="sub">هذي مخرجات فعليّة من المشروع التجريبي — مو رسم توضيحي.</p>
+
+  <div class="term">
+    <div class="term-bar">
+      <span class="dot" style="background:#f85149"></span>
+      <span class="dot" style="background:#d29922"></span>
+      <span class="dot" style="background:#3fb950"></span>
+      <span class="term-title">bash</span>
+    </div>
+    <pre><span class="c">$</span> <span class="w">aqlab scan app.apk</span>
+<span class="f">[FINDING]</span> project: app.apk
+  locales        : default only
+  supportsRtl    : <span class="e">NO</span> — run `aqlab rtl`
+  translatable   : <span class="d">12</span>
+  legacy L/R     : <span class="d">16</span> attribute(s) still left/right
+
+<span class="c">$</span> <span class="w">aqlab rtl app/</span>
+  <span class="f">[PATCH]</span> AndroidManifest.xml: android:supportsRtl="true"
+  <span class="f">[PATCH]</span> res/layout/activity_main.xml: 13 attribute(s)
+  <span class="f">[PATCH]</span> res/layout/list_item.xml: 7 attribute(s)
+  <span class="f">[PATCH]</span> res/values/styles.xml: 2 attribute(s)
+<span class="c">[DONE]</span> 4 file(s) updated
+
+<span class="c">$</span> <span class="w">aqlab scaffold app/ --locale he</span>
+<span class="c">[DONE]</span> scaffolded 12 entries -> app/res/values-he
+       translated: <span class="d">0</span>   pending: <span class="d">13</span>
+       translate:  app/values-he.tsv
+
+<span class="c">$</span> <span class="w">aqlab lint app/ --fail-under 100</span>
+<span class="c">[DONE]</span> 13/13 translated (100.0%)
+<span class="m">  exit 0 — جاهز لـ CI</span></pre>
+  </div>
+</div>
+</section>
+
+<!-- ============ المميزات ============ -->
+<section>
+<div class="wrap">
+  <h2>شنو يسوّي بالضبط <span class="n">03</span></h2>
+  <p class="sub">كل بند هنا مقيس على APK حقيقي، مو وعد.</p>
+
+  <div class="feat">
+    <div class="f">
+      <span class="ic">◧</span>
+      <h3>عكس التخطيط</h3>
+      <p>يحوّل كل <code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">left/right</code> إلى <code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">start/end</code>، ويضيف <code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">supportsRtl</code>. وما يلمس التثبيتات المقصودة — الأزرار اللي لازم تبقى يسار.</p>
+    </div>
+    <div class="f">
+      <span class="ic">⑂</span>
+      <h3>جمع صحيح من CLDR</h3>
+      <p>العربية ستّ صيغ، الإنجليزية ثنتين. الجداول مولّدة من CLDR الحقيقي، مو مخمّنة — 227 لغة، وتقسيم حسب المنطقة.</p>
+    </div>
+    <div class="f">
+      <span class="ic">⇄</span>
+      <h3>فحص bidi</h3>
+      <p>يكشف الأخطاء اللي تصير لما يختلط العربي باللاتيني أو الأرقام. الأخطاء اللي ما تنشاف بالعين وتطلع بالجهاز.</p>
+    </div>
+    <div class="f">
+      <span class="ic">✓</span>
+      <h3>حماية المُحدِّدات</h3>
+      <p><code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">%s</code> و<code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">%1$d</code> تبقى كما هي. أي انحراف بالمُحدِّد يفشل الفحص قبل ما يوصل للمستخدم.</p>
+    </div>
+    <div class="f">
+      <span class="ic">⚙</span>
+      <h3>بناء موقّع</h3>
+      <p>فك، وعدّل، وأعد البناء، ووقّع — كلها بأمر واحد. أو كل خطوة لحالها لما تحتاج تحكّم.</p>
+    </div>
+    <div class="f">
+      <span class="ic">◉</span>
+      <h3>صديق لـ CI</h3>
+      <p><code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">--json</code> يطبع مستند نظيف، و<code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">--fail-under</code> يبوّب التغطية. يشتغل على 3.9 إلى 3.13، ويندوز/لينكس/ماك.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============ الأوامر ============ -->
+<section>
+<div class="wrap">
+  <h2>الأوامر <span class="n">04</span></h2>
+  <p class="sub">إحدى عشرة خطوة، كل واحدة تشتغل لحالها أو متسلسلة.</p>
+
+  <div class="cmds">
+    <div class="cmd"><code>aqlab scan &lt;apk&gt;</code><span>تقرير للقراءة فقط — ما يغيّر ولا بايت</span></div>
+    <div class="cmd"><code>aqlab rtl &lt;dir&gt;</code><span>يمكّن RTL ويحوّل left/right إلى start/end</span></div>
+    <div class="cmd"><code>aqlab scaffold &lt;dir&gt; --locale he</code><span>ينشئ مجلد اللغة وجدول ترجمة</span></div>
+    <div class="cmd"><code>aqlab apply &lt;dir&gt; --tsv he.tsv</code><span>يستورد الترجمات من الجدول</span></div>
+    <div class="cmd"><code>aqlab translate &lt;dir&gt; --tm</code><span>يعبّي من ذاكرة ترجمة ومصطلحات</span></div>
+    <div class="cmd"><code>aqlab lint &lt;dir&gt;</code><span>فحص المُحدِّدات والهروب والتغطية</span></div>
+    <div class="cmd"><code>aqlab xliff &lt;dir&gt;</code><span>يحمي المُحدِّدات بـ &lt;xliff:g&gt;</span></div>
+    <div class="cmd"><code>aqlab diff a.apk b.apk</code><span>الفرق بين نصوص نسختين</span></div>
+    <div class="cmd"><code>aqlab build &lt;dir&gt;</code><span>إعادة بناء + zipalign + توقيع</span></div>
+    <div class="cmd"><code>aqlab all app.apk -o out.apk</code><span>السلسلة كاملة بأمر واحد</span></div>
+  </div>
+</div>
+</section>
+
+<!-- ============ اللغات ============ -->
+<section>
+<div class="wrap">
+  <h2>ما هو محصور بلعربي <span class="n">05</span></h2>
+  <p class="sub">
+    العربية أصعب حالة — ستّ صيغ جمع مقابل ثنتين بالإنجليزي، زائد bidi. عشانها كل الفحوصات بُنيت.
+    بس هي الحد الأقصى، مو النطاق:
+  </p>
+
+  <div class="langs">
+    <div class="lang">العربية <span class="dir">rtl</span></div>
+    <div class="lang">עברית <span class="dir">rtl</span></div>
+    <div class="lang">فارسی <span class="dir">rtl</span></div>
+    <div class="lang">اردو <span class="dir">rtl</span></div>
+    <div class="lang">日本語 <span class="dir">ltr</span></div>
+    <div class="lang">Deutsch <span class="dir">ltr</span></div>
+    <div class="lang">Polski <span class="dir">ltr</span></div>
+    <div class="lang">Türkçe <span class="dir">ltr</span></div>
+    <div class="lang">…و227 لغة <span class="dir">CLDR</span></div>
+  </div>
+</div>
+</section>
+
+<!-- ============ أسئلة ============ -->
+<section>
+<div class="wrap">
+  <h2>أسئلة سريعة <span class="n">06</span></h2>
+  <div style="margin-top:22px">
+
+    <details>
+      <summary>يحتاج أدوات أندرويد مثبّتة؟</summary>
+      <p>الفحص والتعديل على النصوص والتخطيط: لا. البناء والتوقيع: إيه — يحتاج apktool وaapt2. الأداة تكتشفهم وتقول لك شنو ناقص بالضبط.</p>
+    </details>
+
+    <details>
+      <summary>يكسر التطبيق؟</summary>
+      <p>ما يلمس إلا موارد النصوص والتخطيط. <code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">--dry-run</code> يطبع الخطة قبل أي كتابة، و<code style="font-family:var(--mono);font-size:12px;direction:ltr;display:inline-block">--json</code> يعطيك تقرير كامل. جرّب على نسخة أول.</p>
+    </details>
+
+    <details>
+      <summary>ليش مو ملف تنفيذي؟</summary>
+      <p>بايثون قياسي فقط، ملف واحد، صفر اعتماديات. يعني يشتغل بلا بيئة معقّدة، وما ينكسر لما تتحدّث مكتبة.</p>
+    </details>
+
+    <details>
+      <summary>يشتغل على أي إصدار بايثون؟</summary>
+      <p>3.9 إلى 3.13، على ويندوز ولينكس وماك. المصفوفة كلها مختبَرة على CI — عشرة ناقلات، كلها خضراء.</p>
+    </details>
+
+    <details>
+      <summary>مجاني؟</summary>
+      <p>إيه. رخصة MIT — استخدمه وعدّله ووزّعه بلا قيود.</p>
+    </details>
+
+  </div>
+</div>
+</section>
+
+<!-- ============ CTA ============ -->
+<section class="cta">
+<div class="wrap">
+  <h2>جرّبه على تطبيق عندك</h2>
+  <p class="sub" style="margin:0 auto 0;text-align:center">
+    أمر واحد للتثبيت. أمر واحد للفحص — وما يغيّر ولا بايت.
+  </p>
+  <div class="btns">
+    <a class="btn p" href="https://pypi.org/project/aqlab/">ثبّته من PyPI</a>
+    <a class="btn s" href="https://github.com/Gilgamesh-110/aqlab">الكود على GitHub</a>
+  </div>
+</div>
+</section>
+
+<footer>
+<div class="wrap row">
+  <span>aqlab 0.2.1 · رخصة MIT</span>
+  <span>بايثون قياسي · صفر اعتماديات</span>
+</div>
+</footer>
+
+<script>
+document.querySelectorAll('.copy').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var t = b.dataset.copy, old = b.textContent;
+    var done = function () {
+      b.textContent = 'اننسخ'; b.classList.add('ok');
+      setTimeout(function () { b.textContent = old; b.classList.remove('ok'); }, 1400);
+    };
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(t).then(done, done);
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = t; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta); done();
+    }
+  });
+});
+</script>
+</body>
+</html>

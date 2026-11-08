@@ -4319,7 +4319,7 @@ def build_parser():
         prog="aqlab",
         description="Localize any Android app into any language, at any text direction — one command.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="docs: https://github.com/<you>/aqlab")
+        epilog="docs: https://github.com/Gilgamesh-110/aqlab")
     p.add_argument("--version", action="version", version=f"aqlab {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
