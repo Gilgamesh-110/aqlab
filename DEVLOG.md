@@ -405,3 +405,35 @@ both ends (never above the entry count, never below zero). Commits `74348b7`,
 output was only read on trees whose locale had the same plural count as the
 source. Read a small tree with a many-category locale before trusting any count.
 
+## Round 47 — a full pass over the page a stranger reads
+
+Everything shipped green and everything the README promised was run: rtl, apply,
+lint, scan, scaffold, xliff, translate, lint --report, --fail-under, on the demo
+project and on a fresh copy each time. Three things it printed were false.
+
+**`scan --json` was not json.** The flag printed the whole `[FINDING]` block and
+appended one json line at the end, so `aqlab scan --json | jq` failed on
+`[FINDING] project:`. A flag that names a format has to be the only thing on the
+pipe. The human path is byte-identical; the json path now returns a document.
+
+**`scaffold` called source text translated.** A fresh 12-entry tree with no
+target folder printed `translated: 12   pending: 1`. Nothing had been translated.
+`plural_rows_for` fills every row with the SOURCE text so the table ships with
+context, and the counter was reading that field. The honest number is what is in
+the target locale folder or arrived in `--tsv` — a fresh scaffold is 0.
+
+**The banner badge said 641 while the suite was at 652.** Same class of bug as
+the `610 tests` badge before it, so the check now reads the suite itself.
+
+Docs that had drifted from the code: `CITATION.cff` still said Arabic-only at
+0.1.14; `CONTRIBUTING.md` listed three shipped features as "most wanted";
+`README.ar.md` had a dead table-of-contents anchor; the CLI said "Make an Android
+app Arabic". All corrected.
+
+Tests 641 -> 652. Two new checks, both mutation-killed: reverting the scaffold
+counter reports `translated=7` on a fresh tree, and disabling the json branch
+fails with `[FINDING]` on the pipe.
+
+**If you pick this up:** run the documented commands before trusting the docs.
+Every one of these read fine and was wrong.
+

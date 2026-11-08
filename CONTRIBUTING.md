@@ -1,7 +1,7 @@
 # Contributing
 
-Thanks for helping. Arabic RTL is a domain where almost every app gets something
-wrong, so real-world reports are as valuable as code.
+Thanks for helping. Localization is a domain where almost every app gets
+something wrong, so real-world reports are as valuable as code.
 
 ## Setup
 
@@ -34,13 +34,15 @@ Python 3.9+ runs. If it passes locally, it passes in CI.
 
 ## What is most wanted
 
-* **Plural validation for the six Arabic forms** — `zero/one/two/few/many/other`.
-  Arabic is one of the few languages that uses all six; most translations of
-  plurals are wrong.
-* **`android:localeConfig` scaffolding** for the Android 13+ per-app language picker.
-* **Vector-drawable mirroring warnings** — assets with baked-in Latin text.
-* **Other RTL languages.** Hebrew, Persian and Urdu share the mechanics; the
-  scope is the locale folder and a few token tables.
+* **More vector-drawable mirroring cases** — assets with baked-in text are found,
+  but the shapes that need flipping rather than translating are still a judgement
+  call. Real examples welcome.
+* **Locales nobody has run yet.** The CLDR tables cover 227 languages, 258 of them
+  right-to-left; the plural rules are generated, but the *interface* has only been
+  eyeballed in a handful. A screenshot of your language in a real build is worth
+  more than a test.
+* **RTL token tables for scripts beyond Arabic.** Arabic, Hebrew, Persian and Urdu
+  are covered; the mechanics are shared but the counter-direction tokens are not.
 
 ## Reporting a bug
 

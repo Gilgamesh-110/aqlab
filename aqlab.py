@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-aqlab — make any Android app Arabic, RTL-correct, in one command.
+aqlab — localize any Android app into any language, at any text direction.
 
 Single-file, stdlib-only. Wraps apktool + aapt2/zipalign/apksigner; all the
-Arabic-specific logic (RTL attribute migration, BiDi linting, resource
-escaping) is implemented here.
+localization logic (RTL attribute migration, BiDi linting, CLDR plural tables,
+resource escaping) is implemented here. Arabic is the hardest case and the one
+every check was built against, not the limit: --locale takes any BCP-47 tag.
 
     aqlab scan    <apk|dir>            read-only report, changes nothing
     aqlab decode  <apk>                unpack to a project dir
     aqlab rtl     <dir>                manifest supportsRtl + left/right -> start/end
-    aqlab scaffold<dir>                build ar.tsv + res/values-ar/strings.xml
-    aqlab apply   <dir> --tsv ar.tsv   import translated rows
+    aqlab scaffold<dir> --locale he    build he.tsv + res/values-he/strings.xml
+    aqlab apply   <dir> --tsv he.tsv   import translated rows
     aqlab lint    <dir>                format, escaping, coverage — CI friendly
     aqlab build   <dir>                apktool b -> zipalign -> apksigner
     aqlab all     <apk>                decode + rtl + apply + lint + build
@@ -1356,14 +1357,22 @@ def cmd_scaffold(args):
     tsv = Path(args.proj) / f"values-{args.locale}.tsv"
     write_tsv(tsv, rows, merged, sink=sink)
 
-    # `pending` counts rows that still have no text, not `entries - have`.
-    # `have` can be LONGER than `entries`: a locale with more plural categories
-    # than the source gets a synthesised entry per extra category (Arabic: 2
-    # source entries become 6 rows), so the subtraction went negative and
-    # printed `translated: 6  pending: -4`. Counting unfilled rows is the only
-    # number that is true for every locale.
+    # `pending` counts rows that still need a translator. Neither obvious
+    # formulation is right:
+    #
+    #   len(rows) - len(have)  goes negative, because `have` holds synthesised
+    #                          plural categories the source cannot declare
+    #                          (2 Arabic entries became 6 rows: pending -4)
+    #   r.text per row          counts the SOURCE, because plural_rows_for()
+    #                          fills every row with the source text so the table
+    #                          ships with context. A fresh scaffold of a 12-entry
+    #                          tree read "12 of 13 translated" — nothing had been
+    #                          translated at all.
+    #
+    # What is actually known is `merged`: the translations that exist in the
+    # target locale folder or arrived in --tsv. Rows not in it are the work.
     def _counts():
-        filled = sum(1 for r in rows if (r.text or "").strip())
+        filled = sum(1 for r in rows if (merged.get(r.key) or "").strip())
         return f"translated: {filled}   pending: {len(rows) - filled}"
 
     if sink.dry:
@@ -1915,6 +1924,32 @@ def parse_jobs(value):
     return n
 
 
+def _scan_project_json(proj, args, res, entries, loc, manifest, rtl_on,
+                       lefts, ar_dirs):
+    """`scan --json`: one JSON document on stdout and nothing else.
+
+    It used to print the whole human block first and append a one-line summary
+    at the end, so `aqlab scan --json | jq` died on `[FINDING] project: ...`.
+    A flag that says json has to be the only thing on the pipe.
+    """
+    jobs = parse_jobs(getattr(args, "jobs", None))
+    doc = {
+        "target": str(proj),
+        "kind": "project",
+        "locales": loc,
+        "supportsRtl": rtl_on,
+        "translatable": sum(1 for e in entries if e.translatable),
+        "legacyLTR": lefts,
+        "asymmetric": len(symmetry_problems(proj, jobs)),
+        "hardcodedGravity": len(hardcoded_gravity(proj, jobs)),
+        "literalText": len(literal_text_attrs(proj, jobs)),
+        "textVectors": len(text_like_vectors(proj, jobs)),
+        "localeDirs": ar_dirs,
+    }
+    print(json.dumps(doc, ensure_ascii=False, indent=2))
+    return 0
+
+
 def scan_project(proj, args):
     # `--jobs N`: every layout sweep below is a spread of its serial body.
     jobs = parse_jobs(getattr(args, "jobs", None))
@@ -1932,6 +1967,9 @@ def scan_project(proj, args):
     rtl_on = bool(re.search(r'supportsRtl\s*=\s*"true"', manifest))
     lefts = count_legacy_attrs(proj)
     ar_dirs = sorted(p.name for p in res.glob("values-ar*") if p.is_dir())
+    if args.json:
+        return _scan_project_json(proj, args, res, entries, loc, manifest, rtl_on,
+                                  lefts, ar_dirs)
     print(f"[FINDING] project: {proj}")
     print(f"  locales        : {', '.join(loc) or 'default only'}")
     print(f"  supportsRtl    : {'yes' if rtl_on else 'NO — run `aqlab rtl`'}")
@@ -1965,10 +2003,6 @@ def scan_project(proj, args):
         for pth, n, w, h in vec:
             print(f"                   {pth}  ({n} paths, {w}x{h}dp)")
     print(f"  arabic res     : {'yes (' + ', '.join(ar_dirs) + ')' if ar_dirs else 'none — run `aqlab scaffold`'}")
-    if args.json:
-        print(json.dumps({"locales": loc, "supportsRtl": rtl_on,
-                          "translatable": sum(1 for e in entries if e.translatable),
-                          "legacyLTR": lefts, "arabic": bool(ar_dirs)}, ensure_ascii=False))
     return 0
 
 
@@ -4265,7 +4299,7 @@ def _all_stages(args, proj, out, keep=True):
 def build_parser():
     p = argparse.ArgumentParser(
         prog="aqlab",
-        description="Make an Android app Arabic with correct RTL — one command.",
+        description="Localize any Android app into any language, at any text direction — one command.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="docs: https://github.com/<you>/aqlab")
     p.add_argument("--version", action="version", version=f"aqlab {__version__}")
@@ -4324,7 +4358,7 @@ def build_parser():
     common(s)
     s.set_defaults(func=cmd_rtl)
 
-    s = sub.add_parser("scaffold", help="create res/values-ar + translation TSV")
+    s = sub.add_parser("scaffold", help="create res/values-<locale> + translation TSV")
     s.add_argument("proj")
     s.add_argument("--locale", default="ar")
     s.add_argument("--tsv", help="pre-seed with an existing translation table")

@@ -33,8 +33,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Corrected, and `check_plural_table()` now parses the table and compares it
   against the code on every run — mutation-verified.
 
+- **`scaffold` reported source text as translated text.** On a fresh 12-entry
+  tree with no target folder it printed `translated: 12   pending: 1` — nothing
+  had been translated. The counter read `plural_rows_for`'s text field, which
+  deliberately carries the SOURCE text so the table ships with context. It now
+  counts what is actually in the target locale folder or arrived in `--tsv`, so
+  a fresh scaffold reads `translated: 0` with everything pending.
+- **`scan --json` printed the human block too.** The flag appended one JSON line
+  after the whole `[FINDING]` report, so `aqlab scan --json | jq` died on
+  `[FINDING] project: ...`. With `--json` the only thing on stdout is now a JSON
+  document; the human output is unchanged without it.
+- **`CITATION.cff` described the tool as Arabic-only** and pinned `0.1.14`.
+- **`CONTRIBUTING.md` listed three already-shipped items** as "most wanted":
+  plural validation, `localeConfig` scaffolding, other RTL languages.
+- **`README.ar.md` had a broken table-of-contents anchor**, and the Arabic page
+  never carried the demo terminal.
+- **The CLI description still read "Make an Android app Arabic".**
+
 ### Tests
-641 checks.
+652 checks.
 
 ## [Unreleased]
 

@@ -1078,8 +1078,67 @@ def test_pending_never_exceeds_entries(proj, tmp):
             continue
         pending = int(m.group(1))
         check(f"{loc}: pending is not negative", pending >= 0, f"pending={pending}")
-        check(f"{loc}: pending <= entries", pending <= len(entries),
-              f"pending={pending} entries={len(entries)}")
+        # `pending` counts BLANK ROWS, not entries. A locale with more plural
+        # categories than the source gains rows (Hebrew 3 vs English 2), so
+        # pending is legitimately larger than the entry count — it can never be
+        # larger than the row count, which is the real ceiling.
+        n_rows = len(A.plural_rows_for(entries, loc))
+        check(f"{loc}: pending <= rows", pending <= n_rows,
+              f"pending={pending} rows={n_rows}")
+
+    # A fresh scaffold has translated NOTHING. The counter used to read
+    # `plural_rows_for`'s text field, which carries the SOURCE text so the table
+    # ships with context -- so a 12-entry tree with no target folder reported
+    # "translated: 12, pending: 1". Everything is pending until a translator
+    # fills it or a --tsv arrives.
+    fresh = Path(tmp) / "pending_fresh"
+    shutil.copytree(root, fresh, dirs_exist_ok=True)
+    out2 = io.StringIO()
+    with contextlib.redirect_stdout(out2):
+        A.cmd_scaffold(argparse.Namespace(proj=str(fresh), locale="he", tsv=None,
+                                          force=True, dry_run=True, quiet=True))
+    m = re.search(r"translated: (\d+)\s+pending: (\d+)", out2.getvalue())
+    check("fresh scaffold prints both counters", m is not None, out2.getvalue()[:200])
+    if m:
+        translated, pending = int(m.group(1)), int(m.group(2))
+        check("fresh scaffold: nothing is translated yet", translated == 0,
+              f"translated={translated}")
+        check("fresh scaffold: every row is pending", pending > 0,
+              f"pending={pending}")
+
+
+def test_scan_json_is_only_json(proj, tmp):
+    """`scan --json` must put nothing but a JSON document on stdout.
+
+    It printed the whole human block and appended one JSON line at the end, so
+    `aqlab scan --json | jq` failed on `[FINDING] project: ...` — the flag lied
+    about its own output. Both halves matter: the json form parses, the human
+    form is unchanged, and neither leaks into the other.
+    """
+    work = Path(tmp) / "scanjson"
+    shutil.copytree(proj, work)
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_scan(argparse.Namespace(target=str(work), json=True, jobs=1, quiet=True))
+    raw = out.getvalue()
+    try:
+        doc = json.loads(raw)
+    except Exception as e:
+        check("scan --json: stdout parses as JSON", False, f"{e}: {raw[:200]}")
+        return
+    check("scan --json: stdout parses as JSON", True)
+    check("scan --json: no human text leaked", "[FINDING]" not in raw, raw[:200])
+    for key in ("locales", "supportsRtl", "translatable", "legacyLTR"):
+        check(f"scan --json: carries {key}", key in doc, sorted(doc))
+
+    out2 = io.StringIO()
+    with contextlib.redirect_stdout(out2):
+        A.cmd_scan(argparse.Namespace(target=str(work), json=False, jobs=1, quiet=True))
+    human = out2.getvalue()
+    check("scan (human): still starts with the finding block",
+          human.startswith("[FINDING]"), human[:80])
+    check("scan (human): no JSON leaked", '{"' not in human, human[-200:])
 
 
 def test_dry_run_changes_nothing(proj, tmp):
@@ -4566,6 +4625,7 @@ def main():
         test_text_like_vectors(tmp)
         test_forced_scaffold_keeps_six_plural_forms(proj, tmp)
         test_pending_never_exceeds_entries(proj, tmp)
+        test_scan_json_is_only_json(proj, tmp)
         test_dry_run_changes_nothing(proj, tmp)
         test_non_resource_files_are_reported(tmp)
         test_coverage_per_file_and_gates(tmp)

@@ -166,7 +166,7 @@ Or all of it at once — decode, migrate, import the table, lint, rebuild and si
 one summary block, and the run stops at the first stage that fails:
 
 ```sh
-aqlab all app.apk -o app-ar.apk --tsv ar.tsv --ks release.keystore --ks-alias release     --report json
+aqlab all app.apk -o app-ar.apk --tsv ar.tsv --ks release.keystore --ks-alias release --report json
 ```
 
 ```
@@ -177,7 +177,7 @@ aqlab all app.apk -o app-ar.apk --tsv ar.tsv --ks release.keystore --ks-alias re
   [OK] build
 [DONE] aqlab all
   changes : 29 file(s) migrated
-  lint    : 0 error(s), 70 warning(s) RtlSymmetry=37 RtlHardcoded=2
+  lint    : 0 error(s), 82 warning(s) RtlSymmetry=49 RtlHardcoded=2
   output  : app-ar-aligned.apk
   project : app-decoded
   report  : app/aqlab-report.json
@@ -634,9 +634,11 @@ Expected when the original verifies its signature or dex checksums natively — 
 rebuild changes both. See [SECURITY.md](SECURITY.md).
 
 **Does it work for Hebrew, Persian or Urdu?**
-The mechanics are identical — `rtl`, `lint` and the attribute tables are
-script-agnostic, and `--locale` accepts any locale code. The Arabic-specific
-parts are the plural rules and the bidi rules.
+Yes, and for Japanese or German. `rtl`, `lint` and the attribute tables are
+script-agnostic, `--locale` takes any BCP-47 tag, and the plural tables come
+from CLDR per language — 227 of them, 258 of those languages right-to-left.
+Arabic is the case the checks were built against because it is the hardest:
+six plural categories against an English source's two, plus bidi.
 
 **Why not just use Android Studio's RTL preview?**
 That shows you *a* layout. This fixes every layout in the app and tells you which
@@ -662,12 +664,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). The test suite is plain asserts and runs
 anywhere:
 
 ```sh
-python tests/test_aqlab.py       # 85 checks, no framework, no network, no apktool
+python tests/test_aqlab.py       # 652 checks, no framework, no network, no apktool
 ```
 
-Most wanted: plural validation for the six Arabic forms, `android:localeConfig`
-scaffolding for the Android 13+ per-app language picker, and vector-drawable
-mirroring warnings. See [CHANGELOG.md](CHANGELOG.md).
+Most wanted: more vector-drawable mirroring cases, and locale files nobody has
+tested yet. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
