@@ -1,9 +1,12 @@
 {
-  "checks": 595,
+  "checks": 603,
   "errors": 0,
   "warnings": 82,
   "promoted": [
-    "lint: pure-placeholder value is neither `identical to source` nor `no Arabic characters`"
+    "lint --fix no longer promises a pin drop it performed",
+    "lint: pure-placeholder value is neither `identical to source` nor `no Arabic characters`",
+    "plural: a category the locale does not use is reported",
+    "plural: identical-text warning compares the locale's own categories"
   ],
   "updated": "2026-11-08T00:00:00"
 }
