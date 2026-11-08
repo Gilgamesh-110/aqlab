@@ -165,3 +165,16 @@ real-run test while breaking every consumer. Three mutations caught: the
 builder's key assertion off, an extra key on the returned dict, the stale-schema
 refusal off. Real APK (`C:/tmp/symdec`): schema 1, keys exactly `REPORT_KEYS`,
 0 errors / 80 warnings / 635 infos, 715 findings over 5 rules.
+
+## ROUND 40 — E: the untranslated pair fired on values that are only placeholders
+
+`lint` reported `plan_option_format` (`%1$s — %2$s`), `teach_x6_unit_rank` and
+`mtrl_picker_day_of_week_column_header` (both `%1$s`) twice each: once as
+"identical to source", once as "no Arabic characters". A value that is nothing
+but format specifiers is identical in every locale by definition — 4 warnings on
+the reference APK were false positives, and a false positive teaches the user to
+ignore the rule. Fix in the rule, not the doc: both conditions now match against
+`RE_FORMAT.sub("", text)`. Real APK 86 -> 82 warnings, 0 errors; the English
+brand names (`Premium`, `Lichess`, `Chess.com`) still fire.
+Tests 592->595, mutation-tested both branches (revert the strip -> `pure
+placeholder is not called untranslated` fails).

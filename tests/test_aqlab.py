@@ -4149,6 +4149,44 @@ def test_lint_requires_a_default_locale(tmp):
         check("lint does not pass a project with no default locale", False, out.getvalue())
 
 
+def test_format_only_string_is_not_untranslated(tmp):
+    """A value that is nothing but placeholders is identical in every locale.
+
+    Measured on the reference APK: `plan_option_format` (`%1$s — %2$s`),
+    `teach_x6_unit_rank` (`%1$s`) and
+    `mtrl_picker_day_of_week_column_header` all fired twice — once as
+    "identical to source" and once as "no Arabic characters" — for a value that
+    cannot be translated at all. The format specifier is not Latin text, and
+    nothing is left once it is removed, so neither rule may fire.
+    """
+    root = Path(tmp) / "fmt"
+    (root / "res" / "values").mkdir(parents=True)
+    (root / "res" / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<resources><string name="fmt_only">%1$s — %2$s</string>'
+        '<string name="solo">%1$s</string>'
+        '<string name="word">Premium</string></resources>', encoding="utf-8")
+    (root / "res" / "values-ar").mkdir()
+    (root / "res" / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<resources><string name="fmt_only">%1$s — %2$s</string>'
+        '<string name="solo">%1$s</string>'
+        '<string name="word">Premium</string></resources>', encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="x"/></manifest>', encoding="utf-8")
+    ns = argparse.Namespace(proj=str(root), locale="ar", quiet=False, verbose=False,
+                            fail_under=None, fail_under_file=None, report=None, out=None)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(ns)
+    text = out.getvalue()
+    check("pure placeholder is not called untranslated",
+          "fmt_only" not in text and "solo" not in text, text[-500:])
+    check("a real English word still is", "word" in text, text[-500:])
+    check("exactly one warning for the fixture", "1 warning(s)" in text, text[-200:])
+
+
 def test_literal_text_attrs(tmp):
     """A literal `android:text` is the one string translation cannot reach.
 
@@ -4295,6 +4333,7 @@ def main():
         test_translate_glossary_rewrites_a_term_only_in_the_source(tmp)
         test_lint_requires_a_default_locale(tmp)
         test_literal_text_attrs(tmp)
+        test_format_only_string_is_not_untranslated(tmp)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0
 

@@ -3112,10 +3112,12 @@ def cmd_lint(args):
         if t is None:
             continue
         a = t.text
-        if a == e.text and RE_LATIN.search(a):
+        if a == e.text and RE_LATIN.search(RE_FORMAT.sub("", a)):
             add("warn", key, "identical to source and contains Latin — probably untranslated",
                 "translation")
-        elif RE_ARABIC.search(e.text) is None and RE_ANY_ALNUM.search(e.text) and not RE_ARABIC.search(a):
+        elif (RE_ARABIC.search(e.text) is None
+              and RE_ANY_ALNUM.search(RE_FORMAT.sub("", e.text))
+              and not RE_ARABIC.search(a)):
             add("warn", key, "no Arabic characters in the Arabic value", "translation")
         if RE_BARE_PERCENT.search(RE_FORMAT.sub("", a)):
             add("error", key, "bare `%` — must be `%%` or a format specifier, aapt will reject it",
