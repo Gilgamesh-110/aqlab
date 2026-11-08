@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-11-09
+
+### Changed
+- **Positioning: any language, any direction — not Arabic-only.** The code had
+  227 CLDR plural tables, 258 RTL tags and an open `--locale`, while the README
+  opened with "translating an app into Arabic" and the banner said "to Arabic".
+  Measured: `scaffold --dry-run` writes 1426 entries for `he`, `fa`, `ur`, `ja`
+  and `de` alike. Arabic is still the case the checks were built against and the
+  hardest one; it is no longer presented as the scope.
+- **New banner, logo and demo.** The banner shows one screen in three locales
+  (Japanese LTR, Hebrew RTL, Arabic RTL) instead of an LTR/RTL abstraction. The
+  logo survives 16px — verified by rendering at 16, 32, 96 and 128, not assumed.
+  The demo terminal is a session recorded off a real 1426-string tree.
+
+### Fixed
+- **`scaffold` printed a `pending` count in the wrong unit.** `would scaffold
+  1426 entries  pending: 1435` read as a contradiction: `entries` counts source
+  resources, the old `pending` counted table rows (one per plural × quantity).
+  Hebrew gains rows because it needs more categories than the source. The row
+  count is now its own labelled number.
+- **`pending` could go negative.** A 2-entry tree with a 6-category locale
+  printed `translated: 6, pending: -4`, because `have` includes synthesised
+  categories that have no source entry. Both numbers now count rows: filled and
+  blank. Verified he 1426/9, ja 1417/0, de 1426/0.
+- **The README locale table disagreed with the code.** It claimed Hebrew has a
+  `many` category; `plural_categories('he')` returns `('one','two','other')`.
+  Corrected, and `check_plural_table()` now parses the table and compares it
+  against the code on every run — mutation-verified.
+
+### Tests
+641 checks.
+
 ## [Unreleased]
 
 ### Added
