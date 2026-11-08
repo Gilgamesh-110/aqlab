@@ -1212,6 +1212,37 @@ def test_rtl_locales_beyond_arabic(tmp):
     check("region resolves", A.plural_categories("he-IL") == A.plural_categories("he"))
     check("rtl flags", all(A.is_rtl(x) for x in ("ar", "he", "fa", "ur", "ar-rSA")))
     check("ltr is not rtl", not A.is_rtl("en") and not A.is_rtl("fr"))
+    # Coverage of the generated tables: the ten-entry list we used to ship
+    # missed most of CLDR's RTL languages, and a locale with no plural row was
+    # silently exempt from the plural lint (a `de` build with an Arabic-shaped
+    # <plurals> got no warning at all). These two assert the *class* of fix, not
+    # one luckily-spelled tag.
+    check("rtl covers N'Ko and the Kurdish/Arabic minority tags",
+          all(A.is_rtl(x) for x in ("nqo", "sdh", "lrc", "glk", "mzn", "azb", "bal", "ks")))
+    check("rtl does not overreach",
+          not any(A.is_rtl(x) for x in ("de", "ja", "sw", "ha", "ms", "tl", "spanish")))
+    check("any CLDR locale with plurals is linted, not just the RTL ten",
+          A.plural_categories("de") == ("one", "other")
+          and A.plural_categories("sv") == ("one", "other")
+          and A.plural_categories("cy") ==
+          ("zero", "one", "two", "few", "many", "other"))
+    # A region is not noise once CLDR splits the language by it, and Android
+    # writes the qualifier with an underscore — the old `_base` stripped the
+    # region *first*, so `pt_PT` got Brazil's table and its `many` went unchecked.
+    check("pt_PT keeps its own categories", A.plural_categories("pt_PT") ==
+          ("one", "many", "other") and A.plural_categories("pt") ==
+          ("one", "many", "other"))
+    check("region-only split is tried before the bare language",
+          A.plural_categories("pt-PT") == ("one", "many", "other"))
+    check("old CLDR code names resolve like Android writes them",
+          A.plural_categories("iw") == A.plural_categories("he")
+          and A.plural_categories("in") == A.plural_categories("id")
+          and A.plural_categories("ji") == A.plural_categories("yi"))
+    # Android's own script+region qualifier form, which used to lowercase to noise
+    check("b+sr+Latn qualifier resolves", A.plural_categories("b+sr+Latn+RS") ==
+          ("one", "few", "other"))
+    check("unknown stays unlinted", A.plural_categories("qq-ZZ") == ()
+          and A.plural_categories("") == ())
 
     # a Hebrew plural table gets four stubs, not six
     root = Path(tmp) / "heb"

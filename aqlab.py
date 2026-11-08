@@ -411,6 +411,37 @@ def _base(locale):
     return (locale or "").replace("_", "-").split("-")[0].lower()
 
 
+def _plural_locale(locale):
+    """The `PLURAL_CATEGORIES` key for a locale, or "" when CLDR has no row.
+
+    Two different things were collapsed into `_base`. `pt-PT` has a `many`
+    category that Brazil's `pt` does not, and `pt_PT` is the exact string Android
+    writes as the resource qualifier — so the full tag has to be tried *before*
+    the region is stripped, or a European Portuguese app gets the Brazilian table
+    and is never warned that its `many` form is missing. Script subtags are kept
+    for the same reason: CLDR keys `kok_Latn` as its own row.
+
+    `_base` also lowercased, which made `b+sr+Latn+RS` resolve to nothing;
+    Android writes a script+region qualifier that way, so it is split properly
+    and then goes down the same exact -> language_SCRIPT -> language chain.
+    """
+    tag = (locale or "").strip()
+    if not tag:
+        return ""
+    if tag.startswith("b+"):
+        tag = "_".join(tag.split("+")[1:])
+    cand = tag.replace("-", "_")
+    parts = cand.split("_")
+    for n in (len(parts), min(2, len(parts)), 1):
+        probe = "_".join(parts[:n])
+        if probe in PLURAL_CATEGORIES:
+            return probe
+        low = probe.lower()
+        if low in PLURAL_CATEGORIES:
+            return low
+    return ""
+
+
 ARABIC_PLURAL_CATEGORIES = ("zero", "one", "two", "few", "many", "other")
 PLURAL_RANGE = {
     "zero": "0",
@@ -446,7 +477,7 @@ PLURAL_RANGE_BY_LOCALE = {
 
 def plural_range(locale, cat):
     """Count range hint for a category, in the target locale's own terms."""
-    return PLURAL_RANGE_BY_LOCALE.get(_base(locale), PLURAL_RANGE).get(cat, PLURAL_RANGE.get(cat, "?"))
+    return PLURAL_RANGE_BY_LOCALE.get(_plural_locale(locale), PLURAL_RANGE).get(cat, PLURAL_RANGE.get(cat, "?"))
 
 # CLDR plural categories per locale, in CLDR order. Every row below was read
 # out of `babel` (CLDR-backed) on 2026-11-08 — see SCOUT.md round 42 — not
@@ -493,6 +524,200 @@ PLURAL_CATEGORIES = {
     # no distinct plural form at all
     "zh": ("other",), "ja": ("other",), "ko": ("other",),
     "id": ("other",), "ms": ("other",),
+    # Everything below was generated from CLDR release-48 plurals.xml on
+    # 2026-11-08 with `scratch/cldr_table.py`, grouped by category tuple so a
+    # whole row is one language family and a typo shows up as a lone member.
+    # Languages we had no row for were not linted for plurals at all, so an
+    # `ar`-shaped <plurals> in a `de` build (zero/one/two/few/many/other) was
+    # six warnings nobody received. CLDR spells the same language both ways
+    # (`in`/`id`, `iw`/`he`, `ji`/`yi`, `jw`/`jv`): the old code name is the
+    # Android resource qualifier, so both have to resolve.
+    # same CLDR categories ('other',)
+    "bm": ('other',),
+    "bo": ('other',),
+    "dz": ('other',),
+    "hnj": ('other',),
+    "ig": ('other',),
+    "ii": ('other',),
+    "in": ('other',),
+    "jbo": ('other',),
+    "jv": ('other',),
+    "jw": ('other',),
+    "kde": ('other',),
+    "kea": ('other',),
+    "km": ('other',),
+    "lkt": ('other',),
+    "lo": ('other',),
+    "my": ('other',),
+    "nqo": ('other',),
+    "osa": ('other',),
+    "root": ('other',),
+    "sah": ('other',),
+    "ses": ('other',),
+    "sg": ('other',),
+    "su": ('other',),
+    "th": ('other',),
+    "to": ('other',),
+    "tpi": ('other',),
+    "vi": ('other',),
+    "wo": ('other',),
+    "yo": ('other',),
+    "yue": ('other',),
+    # same CLDR categories ('one', 'other')
+    "af": ('one', 'other',),
+    "ak": ('one', 'other',),
+    "an": ('one', 'other',),
+    "asa": ('one', 'other',),
+    "ast": ('one', 'other',),
+    "az": ('one', 'other',),
+    "bal": ('one', 'other',),
+    "bem": ('one', 'other',),
+    "bez": ('one', 'other',),
+    "bg": ('one', 'other',),
+    "bho": ('one', 'other',),
+    "brx": ('one', 'other',),
+    "ce": ('one', 'other',),
+    "ceb": ('one', 'other',),
+    "cgg": ('one', 'other',),
+    "chr": ('one', 'other',),
+    "csw": ('one', 'other',),
+    "da": ('one', 'other',),
+    "de": ('one', 'other',),
+    "doi": ('one', 'other',),
+    "ee": ('one', 'other',),
+    "el": ('one', 'other',),
+    "eo": ('one', 'other',),
+    "et": ('one', 'other',),
+    "eu": ('one', 'other',),
+    "ff": ('one', 'other',),
+    "fi": ('one', 'other',),
+    "fo": ('one', 'other',),
+    "fur": ('one', 'other',),
+    "fy": ('one', 'other',),
+    "gl": ('one', 'other',),
+    "gsw": ('one', 'other',),
+    "guw": ('one', 'other',),
+    "ha": ('one', 'other',),
+    "haw": ('one', 'other',),
+    "hu": ('one', 'other',),
+    "hy": ('one', 'other',),
+    "ia": ('one', 'other',),
+    "ie": ('one', 'other',),
+    "io": ('one', 'other',),
+    "jgo": ('one', 'other',),
+    "ji": ('one', 'other',),
+    "jmc": ('one', 'other',),
+    "ka": ('one', 'other',),
+    "kab": ('one', 'other',),
+    "kaj": ('one', 'other',),
+    "kcg": ('one', 'other',),
+    "kk": ('one', 'other',),
+    "kkj": ('one', 'other',),
+    "kl": ('one', 'other',),
+    "kok": ('one', 'other',),
+    "kok_Latn": ('one', 'other',),
+    "ks": ('one', 'other',),
+    "ksb": ('one', 'other',),
+    "ku": ('one', 'other',),
+    "ky": ('one', 'other',),
+    "lb": ('one', 'other',),
+    "lg": ('one', 'other',),
+    "lij": ('one', 'other',),
+    "ln": ('one', 'other',),
+    "mas": ('one', 'other',),
+    "mg": ('one', 'other',),
+    "mgo": ('one', 'other',),
+    "mk": ('one', 'other',),
+    "ml": ('one', 'other',),
+    "mn": ('one', 'other',),
+    "mr": ('one', 'other',),
+    "nah": ('one', 'other',),
+    "nb": ('one', 'other',),
+    "nd": ('one', 'other',),
+    "ne": ('one', 'other',),
+    "nl": ('one', 'other',),
+    "nn": ('one', 'other',),
+    "nnh": ('one', 'other',),
+    "no": ('one', 'other',),
+    "nr": ('one', 'other',),
+    "nso": ('one', 'other',),
+    "ny": ('one', 'other',),
+    "nyn": ('one', 'other',),
+    "om": ('one', 'other',),
+    "or": ('one', 'other',),
+    "os": ('one', 'other',),
+    "pap": ('one', 'other',),
+    "pcm": ('one', 'other',),
+    "rm": ('one', 'other',),
+    "rof": ('one', 'other',),
+    "rwk": ('one', 'other',),
+    "saq": ('one', 'other',),
+    "sc": ('one', 'other',),
+    "sdh": ('one', 'other',),
+    "seh": ('one', 'other',),
+    "sn": ('one', 'other',),
+    "so": ('one', 'other',),
+    "sq": ('one', 'other',),
+    "ss": ('one', 'other',),
+    "ssy": ('one', 'other',),
+    "st": ('one', 'other',),
+    "sv": ('one', 'other',),
+    "sw": ('one', 'other',),
+    "syr": ('one', 'other',),
+    "ta": ('one', 'other',),
+    "te": ('one', 'other',),
+    "teo": ('one', 'other',),
+    "ti": ('one', 'other',),
+    "tig": ('one', 'other',),
+    "tk": ('one', 'other',),
+    "tl": ('one', 'other',),
+    "tn": ('one', 'other',),
+    "ts": ('one', 'other',),
+    "tzm": ('one', 'other',),
+    "uz": ('one', 'other',),
+    "ve": ('one', 'other',),
+    "vo": ('one', 'other',),
+    "vun": ('one', 'other',),
+    "wa": ('one', 'other',),
+    "wae": ('one', 'other',),
+    "xh": ('one', 'other',),
+    "xog": ('one', 'other',),
+    # `ars` (Najdi Arabic) is CLDR's only other six-category row and shares the
+    # Arabic shape; it was dropped by the grouping pass (its keys collided with
+    # `ar`'s row), so it is the one row here typed by hand.
+    "ars": ('zero', 'one', 'two', 'few', 'many', 'other',),
+    # same CLDR categories ('one', 'few', 'other')
+    "mo": ('one', 'few', 'other',),
+    "sh": ('one', 'few', 'other',),
+    "shi": ('one', 'few', 'other',),
+    # same CLDR categories ('one', 'many', 'other')
+    "lld": ('one', 'many', 'other',),
+    "pt_PT": ('one', 'many', 'other',),
+    "scn": ('one', 'many', 'other',),
+    "vec": ('one', 'many', 'other',),
+    # same CLDR categories ('one', 'two', 'other')
+    "iu": ('one', 'two', 'other',),
+    "iw": ('one', 'two', 'other',),
+    "naq": ('one', 'two', 'other',),
+    "sat": ('one', 'two', 'other',),
+    "se": ('one', 'two', 'other',),
+    "sma": ('one', 'two', 'other',),
+    "smi": ('one', 'two', 'other',),
+    "smj": ('one', 'two', 'other',),
+    "smn": ('one', 'two', 'other',),
+    "sms": ('one', 'two', 'other',),
+    # same CLDR categories ('zero', 'one', 'other')
+    "blo": ('zero', 'one', 'other',),
+    "cv": ('zero', 'one', 'other',),
+    "ksh": ('zero', 'one', 'other',),
+    "lag": ('zero', 'one', 'other',),
+    "prg": ('zero', 'one', 'other',),
+    # same CLDR categories ('one', 'two', 'few', 'other')
+    "dsb": ('one', 'two', 'few', 'other',),
+    "hsb": ('one', 'two', 'few', 'other',),
+    # same CLDR categories ('one', 'two', 'few', 'many', 'other')
+    "gv": ('one', 'two', 'few', 'many', 'other',),
+    "sgs": ('one', 'two', 'few', 'many', 'other',),
 }
 # The categories that carry the most counts, so missing ones are errors: for
 # Arabic `few` (3-10) and `many` (11-99); for Hebrew `many` (20, 30, …). `other`
@@ -507,8 +732,44 @@ PLURAL_OPTIONAL = {
     loc: tuple(c for c in cats if c not in PLURAL_REQUIRED[loc])
     for loc, cats in PLURAL_CATEGORIES.items()
 }
-# Languages that read right-to-left, so `supportsRtl` and start/end matter.
-RTL_LOCALES = ("ar", "he", "fa", "ur", "yi", "dv", "ps", "sd", "ug", "ckb")
+# Languages that read right-to-left, generated from CLDR release-48 on
+# 2026-11-08: every language whose `likelySubtags` script is marked RTL in
+# `scriptMetadata.txt` (Bidi_Class of its letters) — 258 of them, against the ten
+# this list used to hold. The ones that mattered were not exotic: `sdh`/`lrc`/
+# `glk`/`mzn`/`azb`/`bal`/`ks` are Kurdish and Iranian languages whose own
+# speakers ship localised Android apps, and `nqo` (N'Ko) is a whole right-to-left
+# script Latin-adjacent readers never think of.
+#
+# 258 entries is bloat only if `is_rtl` were a display hint. It decides whether a
+# project that has *one* of these folders is treated as right-to-left at all, and
+# a missing entry is a whole locale of reversed-direction layouts nobody gets told
+# about. Generated rather than typed, in `scratch/gen_rtl.py`.
+RTL_LOCALES = frozenset((
+    "aao", "abh", "abv", "acm", "acq", "acw", "acx", "adf", "ae", "aeb", "aec",
+    "aee", "aeq", "afb", "aib", "aii", "aij", "aiq", "amw", "apc", "apd", "ar",
+    "arc", "arq", "ars", "ary", "arz", "ask", "atn", "auj", "auz", "avd", "avl",
+    "ayh", "ayl", "ayn", "ayp", "azb", "bal", "bdz", "bej", "bft", "bgn", "bgp",
+    "bhe", "bhm", "bhn", "bjf", "bjm", "bqi", "brh", "brk", "bsh", "bsk", "chg",
+    "cja", "ckb", "clh", "czk", "dcc", "def", "deh", "dgl", "dmk", "dml", "dv",
+    "ecy", "esh", "fa", "fay", "faz", "fia", "fub", "gbz", "ggg", "gha", "ghr",
+    "gig", "gjk", "gju", "glh", "glk", "grr", "gwc", "gwf", "gwt", "gzi", "hac",
+    "haz", "hbo", "he", "hkh", "hnd", "hno", "hoh", "hrt", "hrz", "hss", "huy",
+    "isk", "itk", "iw", "jad", "jat", "jbe", "jbn", "jdg", "ji", "jnd", "jog",
+    "jpa", "jpr", "jrb", "jye", "kbu", "kby", "kcy", "kfm", "khw", "klj", "kmz",
+    "kqd", "ks", "ktl", "kvx", "kxp", "lad", "lah", "lhs", "lki", "lrc", "lrk",
+    "lrl", "lsa", "lsd", "lss", "luv", "luz", "mby", "mde", "mey", "mfa", "mfi",
+    "mhj", "mid", "mki", "mnj", "mve", "mvy", "myz", "mzb", "mzn", "nli", "nlm",
+    "nqo", "ntz", "nyq", "oar", "obm", "odk", "oru", "ota", "otk", "oui", "pal",
+    "pbt", "pgd", "phl", "phn", "phr", "phv", "plk", "prc", "prd", "prx", "ps",
+    "psh", "psi", "pst", "qxq", "rdb", "rhg", "rmt", "sam", "sbn", "scl", "sd",
+    "sdb", "sdf", "sdg", "sdh", "sds", "sgr", "sgy", "shd", "shm", "shu", "shv",
+    "siy", "siz", "skr", "smp", "smy", "sog", "sqo", "sqt", "srh", "srz", "ssh",
+    "sts", "swb", "syc", "syn", "syr", "tjo", "tks", "tmr", "tov", "tra", "trg",
+    "trm", "trw", "ug", "ur", "ush", "uzs", "vaf", "vgr", "vmh", "wbk", "wlo",
+    "wne", "wni", "wsv", "xco", "xhe", "xka", "xkc", "xkj", "xkp", "xld", "xly",
+    "xmn", "xmr", "xna", "xpr", "xsa", "xsd", "xvi", "ydg", "yhd", "yi", "yih",
+    "yud", "zba", "zdj", "zrp", "zum",
+))
 
 
 def plural_categories(locale):
@@ -517,15 +778,15 @@ def plural_categories(locale):
     A base tag (`ar-rSA`, `he`) resolves on the language subtag; `pt-BR` style
     only matters for languages that differ by region, and none of the RTL ones do.
     """
-    return PLURAL_CATEGORIES.get(_base(locale), ())
+    return PLURAL_CATEGORIES.get(_plural_locale(locale), ())
 
 
 def plural_required(locale):
-    return PLURAL_REQUIRED.get(_base(locale), ())
+    return PLURAL_REQUIRED.get(_plural_locale(locale), ())
 
 
 def plural_optional(locale):
-    return PLURAL_OPTIONAL.get(_base(locale), ())
+    return PLURAL_OPTIONAL.get(_plural_locale(locale), ())
 
 
 def is_rtl(locale):
