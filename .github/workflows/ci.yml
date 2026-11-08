@@ -55,6 +55,11 @@ jobs:
 
       - name: README quickstart still matches the docs
         run: python tests/test_readme.py
+        env:
+          # No android.jar on the runner, so the 13 APK-dependent checks skip and
+          # the suite prints a smaller total than a dev box. The banner badge
+          # advertises the full count; the suite step above is the real gate.
+          AQLAB_CI: "1"
 
       - name: CLI smoke
         run: |
