@@ -362,3 +362,46 @@ languages have none (`lrc`, `glk`, `mzn`), so their direction silently vanished.
 Tests 635 -> 641, six new checks, three mutations killed (hand-added tag in the
 shipped `frozenset`, a language removed from the fixture, block re-spaced so it
 no longer matches the generator). Real APK unchanged: 0 errors, 82 warnings.
+
+## Round 46 — the positioning catches up with the code, and two counters stop lying
+
+The tool has 227 CLDR plural tables and 258 RTL tags, and `--locale` accepts any
+BCP-47 code. Measured, not claimed: `scaffold --dry-run` on a real 1426-entry
+tree writes 1426 entries for he, fa, ur, ja and de alike. The README opened with
+"translating an app into Arabic" anyway, and the banner said "to Arabic". Anyone
+shopping for a localization tool read the code as an Arabic-only thing and
+scrolled past. The positioning now says what runs: Arabic is the hardest case
+and the one every check was built against, not the limit.
+
+**Counter bug 1 — units mixed in one line.** `scaffold` printed
+`would scaffold 1426 entries` next to `pending: 1435`. Both numbers were right
+and the pair read as a contradiction, because `entries` counts source resources
+while the old `pending` counted TABLE ROWS: one row per (plural, quantity). A
+locale with more categories than the source gains rows — Hebrew needs four where
+English has two, so 18 plurals became 1435 rows. The fix is not a clamp: report
+the row count as its own labelled number.
+
+**Counter bug 2 — the subtraction went negative.** `pending: len(rows) - len(have)`
+went wrong in the other direction on small projects: `have` includes synthesised
+categories that have NO source entry, so a 2-entry tree with a 6-category locale
+printed `translated: 6, pending: -4`. Counting filled rows and blank rows is the
+only formulation true for every locale. Verified: he 1426/9, ja 1417/0, de
+1426/0, no negative anywhere.
+
+**Assets.** The logo was four equal bars that read as decoration at any size.
+Render at 16, 32, 96 and 128 pixels and the new three-bar columns with a lit
+seam survive: colour carries the LTR/RTL split where the bars blur. The demo
+terminal was invented output; it is now a session recorded off that same
+1426-string tree — 73 legacy attributes, 49 asymmetric sides, 29 files patched,
+0 errors and 82 warnings. Then the record caught its own omission: 31 of the 73
+rewrites live in `res/values/styles.xml`, not in layouts, and the terminal had
+only listed layout files.
+
+Tests 635 -> 641. `test_pending_never_exceeds_entries` pins the invariant from
+both ends (never above the entry count, never below zero). Commits `74348b7`,
+`54eb969`, `1fc32c3`.
+
+**If you pick this up:** the counter bug was invisible for weeks because the
+output was only read on trees whose locale had the same plural count as the
+source. Read a small tree with a many-category locale before trusting any count.
+

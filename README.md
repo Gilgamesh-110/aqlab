@@ -422,17 +422,20 @@ Read straight from `aapt2 dump resources`, so neither APK is decoded — no
 not change is never listed; it is the majority of any diff and would bury the
 real changes. Exit code is 0 when the two are identical, so CI can gate on drift.
 
-### Other RTL languages
+### Any language, any direction
 
-The plural tables and the `supportsRtl` machinery are not Arabic-specific. CLDR
-assigns categories per language, and they are genuinely different:
+The plural tables and the `supportsRtl` machinery are not Arabic-specific.
+`--locale` takes any BCP-47 tag: 227 have a CLDR plural table, 258 are
+right-to-left. Categories differ per language, and they are genuinely different:
 
-| locale | categories | `many` means |
-|---|---|---|
-| `ar` | `zero one two few many other` | 11–99 |
-| `he` | `one two many other` | 20, 30, 40 … |
-| `fa` | `one other` | — |
-| `ur` | `one other` | — |
+| locale | direction | categories | `many` means |
+|---|---|---|---|
+| `ar` | RTL | `zero one two few many other` | 11–99 |
+| `he` | RTL | `one two other` | — |
+| `fa` | RTL | `one other` | — |
+| `ur` | RTL | `one other` | — |
+| `pl` | LTR | `one few many other` | fractions |
+| `ja` | LTR | `other` | — |
 
 ```bash
 aqlab scaffold proj --locale he
@@ -500,11 +503,14 @@ coverage, the match breakdown (`exact`/`fuzzy`/`kept`/`cmd`) and one finding per
 unmatched key. `--dry-run` still writes the report: previewing the gaps is what
 a report is for.
 
-## The other part nobody does: Arabic has six plurals, not two
+## The other part nobody does: six plural forms, not two
 
-English has two plural forms (`one`, `other`). Arabic has **six**, and the two
-that cover almost every count — `few` (3–10) and `many` (11–99) — are exactly the
-two an English source cannot hand you:
+English has two plural forms (`one`, `other`). Arabic has **six**, Hebrew four,
+Japanese one, Polish four. The gap is not a detail — it is the difference
+between a translated app and a correct one. Arabic is the case shown here
+because it is the hardest: the two categories that cover almost every count —
+`few` (3–10) and `many` (11–99) — are exactly the two an English source cannot
+hand you.
 
 ```
 count  0     1       2       3-10       11-99      100, 101, …

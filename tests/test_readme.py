@@ -64,7 +64,6 @@ def main():
     if got == expected:
         print(f"[OK] README quickstart matches ({len(expected)} lines)")
         return 0
-
     print("[FAIL] README quickstart output no longer matches the documentation")
     for i in range(max(len(got), len(expected))):
         g = got[i] if i < len(got) else "<missing>"
@@ -73,8 +72,44 @@ def main():
             print(f"  line {i + 1}")
             print(f"    documented: {e}")
             print(f"    actual    : {g}")
-    return 1
+
+
+def check_plural_table():
+    """The locale table in the README must match what the code returns.
+
+    It drifted once already: the table claimed Hebrew had a `many` category
+    while `plural_categories('he')` returned ('one','two','other'). A table
+    nobody checks is a table that lies, and this one sits directly under the
+    claim that the tables come from CLDR rather than from Arabic by analogy.
+    """
+    sys.path.insert(0, str(ROOT))
+    import aqlab
+
+    row = re.compile(r"^\|\s*`([a-z]{2,3})`\s*\|\s*(RTL|LTR)\s*\|\s*`([^`]+)`", re.M)
+    rows = row.findall(README)
+    if not rows:
+        print("[FAIL] README: the locale table is gone")
+        return 1
+
+    bad = 0
+    for loc, direction, cats in rows:
+        want = "RTL" if aqlab.is_rtl(loc) else "LTR"
+        if direction != want:
+            print(f"[FAIL] README table: {loc} is documented {direction}, code says {want}")
+            bad += 1
+        documented = tuple(cats.split())
+        actual = tuple(aqlab.plural_categories(loc))
+        if documented != actual:
+            print(f"[FAIL] README table: {loc} categories {documented} != {actual}")
+            bad += 1
+
+    if bad:
+        return 1
+    print(f"[OK] README locale table matches the code ({len(rows)} locales)")
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main() or 0
+    rc |= check_plural_table() or 0
+    sys.exit(rc)
