@@ -40,14 +40,14 @@
       <rect x="0" y="0" width="84" height="84" rx="20" fill="#0d1117" stroke="#262d36" stroke-width="1.5"/>
       <line x1="42" y1="14" x2="42" y2="70" stroke="url(#seam)" stroke-width="1.5"/>
       <g fill="#5a6472">
-        <rect x="12" y="22" width="22" height="8" rx="2"/>
-        <rect x="12" y="38" width="14" height="8" rx="2"/>
-        <rect x="12" y="54" width="18" height="8" rx="2"/>
+        <rect x="11" y="20" width="24" height="9" rx="2.5"/>
+        <rect x="11" y="37" width="15" height="9" rx="2.5"/>
+        <rect x="11" y="54" width="21" height="9" rx="2.5"/>
       </g>
-      <g fill="url(#markA)">
-        <rect x="50" y="22" width="22" height="8" rx="2"/>
-        <rect x="58" y="38" width="14" height="8" rx="2"/>
-        <rect x="54" y="54" width="18" height="8" rx="2"/>
+      <g fill="#58a6ff">
+        <rect x="49" y="20" width="24" height="9" rx="2.5"/>
+        <rect x="58" y="37" width="15" height="9" rx="2.5"/>
+        <rect x="52" y="54" width="21" height="9" rx="2.5"/>
       </g>
     </g>
 
@@ -195,7 +195,7 @@
         <rect x="32" y="62" width="50" height="17" rx="8.5" fill="#0a1512" stroke="#1e2b25"/>
         <text x="57" y="74" font-family="Inter, 'Segoe UI', Tahoma, sans-serif" font-size="8" fill="#546e63" text-anchor="middle">الداما</text>
         <text x="170" y="94" font-family="Inter, 'Segoe UI', Tahoma, sans-serif" font-size="7.5" fill="#7d998c" text-anchor="end">جاهز. المس ابدأ ثم افتح مباراة.</text>
-        <text x="170" y="112" font-family="Inter, 'Segoe UI', Tahoma, sans-serif" font-size="9" font-weight="700" fill="#e2ebe6" text-anchor="end">أغلق هاتفك المساعد أثناء تشغيله</text>
+        <text x="170" y="112" font-family="Inter, 'Segoe UI', Tahoma, sans-serif" font-size="9" font-weight="700" fill="#e2ebe6" text-anchor="end">أغلق هاتفك أثناء التحليل</text>
         <g fill="#5c7a6c">
           <rect x="30" y="122" width="140" height="4" rx="2"/>
           <rect x="52" y="131" width="118" height="4" rx="2"/>
@@ -203,7 +203,7 @@
           <rect x="68" y="149" width="102" height="4" rx="2"/>
         </g>
         <rect x="98" y="170" width="72" height="18" rx="9" fill="#238636"/>
-        <text x="134" y="182" font-family="Inter, 'Segoe UI', Tahoma, sans-serif" font-size="7" fill="#ffffff" text-anchor="middle">إعدادات الهاتف</text>
+        <text x="134" y="182" font-family="Inter, 'Segoe UI', Tahoma, sans-serif" font-size="7" fill="#ffffff" text-anchor="middle">إعدادات</text>
         <rect x="18" y="170" width="72" height="18" rx="9" fill="#0d1a15" stroke="#1e2b25"/>
         <text x="54" y="182" font-family="Inter, 'Segoe UI', Tahoma, sans-serif" font-size="7" fill="#6c8378" text-anchor="middle">إخفاء التلميح</text>
         <text x="100" y="226" font-family="Inter, sans-serif" font-size="22" font-weight="700" fill="#3fb950" text-anchor="middle">0</text>

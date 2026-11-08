@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" alt="aqlab" width="88" height="88">
+
 <img src="assets/banner-v3.svg" alt="aqlab — localize any Android APK into any language and any text direction. One command migrates strings, mirrors layouts, rebuilds the APK; 227 locales, 258 RTL tags, verified on a real device with zero crashes." width="100%">
 
 **Any language. Any direction. One command.**
@@ -37,7 +39,7 @@ migration, Unicode bidi hazards, and Android resource escaping.
 </p>
 
 <p align="center">
-  <img src="assets/demo.svg" alt="terminal session: scan, rtl, lint" width="100%">
+  <img src="assets/demo.svg" alt="terminal session: aqlab scan reports 73 legacy left/right attributes, aqlab rtl dry-run patches 29 files, aqlab lint reports 0 errors and 82 warnings" width="100%">
 </p>
 
 ## Try it in 5 seconds

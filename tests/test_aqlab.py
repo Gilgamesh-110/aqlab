@@ -3399,6 +3399,47 @@ def test_plural_table_matches_cldr():
           and A.plural_categories("iw") == A.plural_categories("he"))
 
 
+def test_rtl_table_matches_cldr():
+    """The shipped RTL list is CLDR's, rebuilt from the checked-in fixture.
+
+    `RTL_LOCALES` was a typed ten, then generated once into a 258-entry literal
+    whose generator lived in a scratch folder and nowhere in the repo — so a
+    hand edit, or a CLDR release that adds a script, could not be caught. Now
+    `tools/cldr_tables.py` rebuilds it from
+    `tests/fixtures/cldr/rtl.json` (CLDR-48 `likelySubtags.xml` +
+    `scriptMetadata.txt`, rule recorded in the fixture) and this compares.
+    Mutation: change one tag in the shipped `frozenset`, or drop a line of the
+    fixture, and this fails.
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    import cldr_tables
+    expect = cldr_tables.rtl_table()
+    shipped = set(A.RTL_LOCALES)
+    wrong = sorted(expect ^ shipped)
+    check("rtl list is exactly CLDR's", not wrong, f"differs on {wrong[:8]}")
+    check("rtl fixture is a real CLDR row set",
+          len(expect) > 50 and {"ar", "he", "fa", "ur", "nqo"} <= expect,
+          str(len(expect)))
+    # The three failure modes of a typed list, asserted as behaviour:
+    # a language CLDR names RTL but the old ten never did,
+    check("a CLDR RTL language is reported",
+          A.is_rtl("hbo") and A.is_rtl("bal") and A.is_rtl("syr"))
+    # a region is stripped before the lookup, as Android writes it,
+    check("region on an RTL language still resolves",
+          A.is_rtl("ar-rSA") and A.is_rtl("he-IL"))
+    # and a language with an RTL *neighbour* is not swept in with it.
+    check("rtl does not overreach on its neighbours",
+          not any(A.is_rtl(x) for x in ("ku", "tr", "az", "ms", "ha")))
+    # The generator is the repo's, not a scratch script: `--update` output must
+    # be byte-identical to what ships, so the block is reproducible.
+    block = cldr_tables.render_rtl(expect)
+    src = open(A.__file__, encoding="utf-8").read()
+    i = src.index(cldr_tables.RTL_BEGIN)
+    j = src.index(cldr_tables.RTL_END, i) + len(cldr_tables.RTL_END)
+    check("the shipped rtl block is the generator's own output",
+          src[i:j] == block, (src[i:j][-40:], block[-40:]))
+
+
 def _wr(p, body):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body, encoding="utf-8")
@@ -4574,6 +4615,7 @@ def main():
         test_all_unsigned_output_line()
         test_plural_structure(tmp)
         test_plural_table_matches_cldr()
+        test_rtl_table_matches_cldr()
         test_unknown_locale_plural_is_not_faked(tmp)
         test_locale_folder_match_is_case_insensitive(tmp)
         test_plural_file_roundtrip(tmp)

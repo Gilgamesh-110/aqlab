@@ -533,33 +533,12 @@ PLURAL_OPTIONAL = {
 # 258 entries is bloat only if `is_rtl` were a display hint. It decides whether a
 # project that has *one* of these folders is treated as right-to-left at all, and
 # a missing entry is a whole locale of reversed-direction layouts nobody gets told
-# about. Generated rather than typed, in `scratch/gen_rtl.py`.
+# about. Generated rather than typed, by `tools/cldr_tables.py` from the
+# checked-in `tests/fixtures/cldr/rtl.json`; `tests/test_aqlab.py` rebuilds it.
 RTL_LOCALES = frozenset((
-    "aao", "abh", "abv", "acm", "acq", "acw", "acx", "adf", "ae", "aeb", "aec",
-    "aee", "aeq", "afb", "aib", "aii", "aij", "aiq", "amw", "apc", "apd", "ar",
-    "arc", "arq", "ars", "ary", "arz", "ask", "atn", "auj", "auz", "avd", "avl",
-    "ayh", "ayl", "ayn", "ayp", "azb", "bal", "bdz", "bej", "bft", "bgn", "bgp",
-    "bhe", "bhm", "bhn", "bjf", "bjm", "bqi", "brh", "brk", "bsh", "bsk", "chg",
-    "cja", "ckb", "clh", "czk", "dcc", "def", "deh", "dgl", "dmk", "dml", "dv",
-    "ecy", "esh", "fa", "fay", "faz", "fia", "fub", "gbz", "ggg", "gha", "ghr",
-    "gig", "gjk", "gju", "glh", "glk", "grr", "gwc", "gwf", "gwt", "gzi", "hac",
-    "haz", "hbo", "he", "hkh", "hnd", "hno", "hoh", "hrt", "hrz", "hss", "huy",
-    "isk", "itk", "iw", "jad", "jat", "jbe", "jbn", "jdg", "ji", "jnd", "jog",
-    "jpa", "jpr", "jrb", "jye", "kbu", "kby", "kcy", "kfm", "khw", "klj", "kmz",
-    "kqd", "ks", "ktl", "kvx", "kxp", "lad", "lah", "lhs", "lki", "lrc", "lrk",
-    "lrl", "lsa", "lsd", "lss", "luv", "luz", "mby", "mde", "mey", "mfa", "mfi",
-    "mhj", "mid", "mki", "mnj", "mve", "mvy", "myz", "mzb", "mzn", "nli", "nlm",
-    "nqo", "ntz", "nyq", "oar", "obm", "odk", "oru", "ota", "otk", "oui", "pal",
-    "pbt", "pgd", "phl", "phn", "phr", "phv", "plk", "prc", "prd", "prx", "ps",
-    "psh", "psi", "pst", "qxq", "rdb", "rhg", "rmt", "sam", "sbn", "scl", "sd",
-    "sdb", "sdf", "sdg", "sdh", "sds", "sgr", "sgy", "shd", "shm", "shu", "shv",
-    "siy", "siz", "skr", "smp", "smy", "sog", "sqo", "sqt", "srh", "srz", "ssh",
-    "sts", "swb", "syc", "syn", "syr", "tjo", "tks", "tmr", "tov", "tra", "trg",
-    "trm", "trw", "ug", "ur", "ush", "uzs", "vaf", "vgr", "vmh", "wbk", "wlo",
-    "wne", "wni", "wsv", "xco", "xhe", "xka", "xkc", "xkj", "xkp", "xld", "xly",
-    "xmn", "xmr", "xna", "xpr", "xsa", "xsd", "xvi", "ydg", "yhd", "yi", "yih",
-    "yud", "zba", "zdj", "zrp", "zum",
+    "aao", "abh", "abv", "acm", "acq", "acw", "acx", "adf", "ae", "aeb", "aec", "aee", "aeq", "afb", "aib", "aii", "aij", "aiq", "amw", "apc", "apd", "ar", "arc", "arq", "ars", "ary", "arz", "ask", "atn", "auj", "auz", "avd", "avl", "ayh", "ayl", "ayn", "ayp", "azb", "bal", "bdz", "bej", "bft", "bgn", "bgp", "bhe", "bhm", "bhn", "bjf", "bjm", "bqi", "brh", "brk", "bsh", "bsk", "chg", "cja", "ckb", "clh", "czk", "dcc", "def", "deh", "dgl", "dmk", "dml", "dv", "ecy", "esh", "fa", "fay", "faz", "fia", "fub", "gbz", "ggg", "gha", "ghr", "gig", "gjk", "gju", "glh", "glk", "grr", "gwc", "gwf", "gwt", "gzi", "hac", "haz", "hbo", "he", "hkh", "hnd", "hno", "hoh", "hrt", "hrz", "hss", "huy", "isk", "itk", "iw", "jad", "jat", "jbe", "jbn", "jdg", "ji", "jnd", "jog", "jpa", "jpr", "jrb", "jye", "kbu", "kby", "kcy", "kfm", "khw", "klj", "kmz", "kqd", "ks", "ktl", "kvx", "kxp", "lad", "lah", "lhs", "lki", "lrc", "lrk", "lrl", "lsa", "lsd", "lss", "luv", "luz", "mby", "mde", "mey", "mfa", "mfi", "mhj", "mid", "mki", "mnj", "mve", "mvy", "myz", "mzb", "mzn", "nli", "nlm", "nqo", "ntz", "nyq", "oar", "obm", "odk", "oru", "ota", "otk", "oui", "pal", "pbt", "pgd", "phl", "phn", "phr", "phv", "plk", "prc", "prd", "prx", "ps", "psh", "psi", "pst", "qxq", "rdb", "rhg", "rmt", "sam", "sbn", "scl", "sd", "sdb", "sdf", "sdg", "sdh", "sds", "sgr", "sgy", "shd", "shm", "shu", "shv", "siy", "siz", "skr", "smp", "smy", "sog", "sqo", "sqt", "srh", "srz", "ssh", "sts", "swb", "syc", "syn", "syr", "tjo", "tks", "tmr", "tov", "tra", "trg", "trm", "trw", "ug", "ur", "ush", "uzs", "vaf", "vgr", "vmh", "wbk", "wlo", "wne", "wni", "wsv", "xco", "xhe", "xka", "xkc", "xkj", "xkp", "xld", "xly", "xmn", "xmr", "xna", "xpr", "xsa", "xsd", "xvi", "ydg", "yhd", "yi", "yih", "yud", "zba", "zdj", "zrp", "zum",
 ))
+
 
 
 def plural_categories(locale):
@@ -580,6 +559,9 @@ def plural_optional(locale):
 
 
 def is_rtl(locale):
+    # `_base`, not `_plural_locale`: the latter only knows tags CLDR has a
+    # plural row for, and most RTL languages have none (lrc, glk, mzn) —
+    # their direction is a script fact, not a plural one.
     return _base(locale) in RTL_LOCALES
 
 

@@ -1,19 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="aqlab">
-  <g>
-    <rect x="16" y="16" width="480" height="480" rx="72" fill="#0d1117" stroke="#30363d" stroke-width="8"/>
-    <rect x="250" y="80" width="12" height="352" fill="#30363d"/>
-    <g fill="#8b949e">
-      <rect x="72" y="112" width="132" height="44"/>
-      <rect x="72" y="188" width="84" height="44"/>
-      <rect x="72" y="264" width="116" height="44"/>
-      <rect x="72" y="340" width="68" height="44"/>
-    </g>
-    <g fill="#58a6ff">
-      <rect x="308" y="112" width="132" height="44"/>
-      <rect x="356" y="188" width="84" height="44"/>
-      <rect x="324" y="264" width="116" height="44"/>
-      <rect x="372" y="340" width="68" height="44"/>
-    </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img"
+     aria-label="aqlab — one glyph mirrored across a seam: LTR on the left, RTL on the right">
+  <defs>
+    <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#58a6ff"/>
+      <stop offset="1" stop-color="#3fb950"/>
+    </linearGradient>
+    <linearGradient id="seamG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#58a6ff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#58a6ff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#3fb950" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#161b22"/>
+      <stop offset="1" stop-color="#0b0f14"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#plate)"/>
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="none" stroke="#2a313b" stroke-width="4"/>
+
+  <line x1="256" y1="88" x2="256" y2="424" stroke="url(#seamG)" stroke-width="6"/>
+
+  <g fill="#6e7681">
+    <rect x="52" y="116" width="164" height="66" rx="13"/>
+    <rect x="52" y="204" width="86" height="66" rx="13"/>
+    <rect x="52" y="292" width="140" height="66" rx="13"/>
+  </g>
+
+  <g fill="#58a6ff">
+    <rect x="296" y="116" width="164" height="66" rx="13"/>
+    <rect x="374" y="204" width="86" height="66" rx="13"/>
+    <rect x="320" y="292" width="140" height="66" rx="13"/>
   </g>
 </svg>
