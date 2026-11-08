@@ -1,8 +1,10 @@
 <div align="center">
 
-<img src="assets/banner-v2.svg" alt="aqlab — Arabic &amp; RTL localization for Android APKs. LTR layout becomes RTL in one command; verified on a real device with zero crashes." width="100%">
+<img src="assets/banner-v3.svg" alt="aqlab — localize any Android APK into any language and any text direction. One command migrates strings, mirrors layouts, rebuilds the APK; 227 locales, 258 RTL tags, verified on a real device with zero crashes." width="100%">
 
-**Flip any Android app to Arabic — RTL-correct — in one command.**
+**Any language. Any direction. One command.**
+
+Turn any Android APK into a localized build — strings, layouts, RTL semantics, rebuilt and signed.
 
 [![tests](https://github.com/Gilgamesh-110/aqlab/actions/workflows/ci.yml/badge.svg)](https://github.com/Gilgamesh-110/aqlab/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/aqlab.svg?color=blue)](https://pypi.org/project/aqlab/)
@@ -21,10 +23,11 @@
 
 ---
 
-Translating an app into Arabic is the easy half. The half almost everybody gets
-wrong is the interface: the drawer stays on the left, the back arrow still points
-left, progress bars fill left-to-right, `%d` placeholders go missing, and
-punctuation lands on the wrong side of the line.
+Turn any Android APK into a localized build — strings, layouts, RTL semantics,
+rebuilt and signed. Arabic is the hardest case and the one every check was
+developed against: six plural forms, bidi mixing, mirror-image layouts. The
+machinery underneath is script-agnostic — `--locale` takes any BCP-47 code,
+227 have CLDR plural tables, 258 are right-to-left.
 
 **`aqlab` does the part that is not translation** — layout direction, attribute
 migration, Unicode bidi hazards, and Android resource escaping.
@@ -359,7 +362,7 @@ have flagged `bg_elo_badge.xml` (a `<shape>` background) and
 `scaffold` writes `res/xml/locales_config.xml` listing every `values-*` language
 folder and points `android:localeConfig` at it, so the app appears in the system
 per-app language picker. Without it a user on an English phone cannot switch
-just this app to Arabic.
+just this app to its translated locale.
 
 ```xml
 <locale-config xmlns:android="http://schemas.android.com/apk/res/android">
