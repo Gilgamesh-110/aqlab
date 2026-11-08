@@ -322,3 +322,43 @@ Two lint findings fixed in the same pass, both measured on a fixture:
 
 Tests 610 -> 623, five new checks all mutation-tested (unguarded `unknown`
 list, dropped NOTE, glob restored). Real APK unchanged: 0 errors, 82 warnings.
+
+## Round 45 — the RTL table gets a generator, and the generator found a hole
+
+`RTL_LOCALES` was generated once, by a script the comment placed in
+`scratch/gen_rtl.py` — a scratch folder, not the repo. Nothing could rebuild it,
+nothing compared it, and the same defect class we had just closed for plurals
+(a typed table that drifts from CLDR) was still open one screen up.
+
+`tools/cldr_tables.py` now owns both tables: `rtl_table()` reads
+`tests/fixtures/cldr/rtl.json` (988 bytes: CLDR-48 `likelySubtags.xml` +
+`scriptMetadata.txt`, the derivation rule recorded in the file) and
+`render_rtl()` writes the block; `test_rtl_table_matches_cldr` rebuilds and
+compares on every run, including that the shipped text is byte-identical to the
+generator's own output, so `--update` is reproducible.
+
+Three regressions found and fixed while wiring it:
+
+* **A 32-locale hole was about to ship.** The fixture's first cut parsed
+  `<likelySubtag from="…" to="…"/>` literally, and `azb` (South Azerbaijani, an
+  RTL Arabic-script language) carries `origin="sil1"` — the attribute made the
+  record invisible, and the recount said 258 where the honest number was 258
+  *with* `azb`. Verified against the 7788-record file both ways.
+* **The plural table shipped one key wrong this round.** `('other')` is `'other'`
+  in Python — a str key, so `PLURAL_CATEGORIES` had 32 one-plural locales that no
+  lookup ever found, and `plural_categories('zh')` returned the whole group tuple
+  instead of `('other',)`. Round 44's generator wrote the group key with
+  `", ".join(...)`, which is empty for a one-category group. Now `('other',)`.
+  This one predates the round and would have made every `other`-only locale
+  (ja, zh, ko, th, vi neighbours) lint against a tuple of 32 languages.
+* **`--update` grew a blank line per run** (it re-added the trailing newline the
+  block already ended with), so the block was not idempotent. Two runs now hash
+  the same file.
+
+`is_rtl` keeps `_base`: the wrong move while wiring this was to swap it for
+`_plural_locale`, which only knows tags with a CLDR plural row — and most RTL
+languages have none (`lrc`, `glk`, `mzn`), so their direction silently vanished.
+
+Tests 635 -> 641, six new checks, three mutations killed (hand-added tag in the
+shipped `frozenset`, a language removed from the fixture, block re-spaced so it
+no longer matches the generator). Real APK unchanged: 0 errors, 82 warnings.

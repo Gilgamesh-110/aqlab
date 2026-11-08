@@ -1,5 +1,5 @@
 {
-  "checks": 623,
+  "checks": 641,
   "errors": 0,
   "warnings": 82,
   "promoted": [
@@ -12,7 +12,10 @@
     "rtl: the RTL language list is CLDR's 258, not a typed ten",
     "plural: the shipped table is CLDR's file, rebuilt and compared each run",
     "plural: a locale with no CLDR row is reported as unchecked, not invented",
-    "lint: values-<locale> folder match is case-insensitive"
+    "lint: values-<locale> folder match is case-insensitive",
+    "rtl: the shipped RTL table is CLDR's, rebuilt from the checked-in fixture each run",
+    "rtl: every language whose CLDR likely script is RTL, not the 82 a first pass found",
+    "plural: a single-category group no longer ships as a str key that never matches"
   ],
-  "updated": "2026-11-08T23:29:25"
+  "updated": "2026-11-09T00:05:07"
 }
