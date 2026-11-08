@@ -213,3 +213,48 @@ Two lint bugs found while wiring it:
 Note: an editing mishap dropped the `fix_gravity` call from `--fix` and the
 `force_fix_gravity` test caught it immediately — the gravity sweep is back.
 Tests 595 -> 603, real APK unchanged at 0 errors / 82 warnings.
+
+## Round 38 — `--fix` measured on two real APKs; two harmful fixes removed
+
+The owner asked for three things: run `--fix` twice on the same tree, use a real
+APK rather than fixtures, and prove the fixes do not change app behaviour or
+break resources. All three ran. The audit found two fixes that were doing
+damage, both invisible to fixtures.
+
+**1. `fix_symmetry` invented attributes.** On the Material layouts of a decoded
+APK it added 27 attributes across 16 files and every one changed the rendered
+shape: a `statusDot` carrying only `marginEnd=8` gained `marginStart=8`, a
+Spinner carrying only `marginStart=8` gained `marginEnd=8`, `progressUsage`
+gained a side it never had. The missing partner was not a hole — it was the
+design, an element parked against one edge on purpose. Android's own
+`RtlSymmetry` is a warning for exactly this reason and never auto-fixes it.
+`fix_symmetry` is no longer called from `cmd_lint`; the check stays a warning.
+The helper itself is kept (tested) for a future `--fix-symmetry` opt-in.
+
+**2. `fix_pin_local` stripped deliberate LTR pins.** On 8BP it removed
+`layoutDirection="ltr"` from the ExoPlayer control views. Those views pin their
+container so play/pause/skip keep playback order under Arabic — the icons travel
+with the layout and the buttons would render backwards. A pin on an element
+with no physical attributes is a marker, not a redundant literal, so
+`rtl_enabled` findings are no longer queued for removal. Pins that *do* carry
+physical attributes are still dropped, and their attrs still migrate.
+
+Measured after the change:
+
+| check | Chess (534 xml, 199 layout) | 8BP (509 layout) |
+|---|---|---|
+| second `--fix` pass changes | 0 files | — |
+| attributes invented | 0 | 0 |
+| deliberate pins stripped | 0 | 0 |
+| XML parses | 532/532 | 509/509 |
+| rebuilt APK | 84 MB, zip clean, 199 layout, 1388 ar strings | — |
+
+Also fixed: the test suite carried two contradictory Hebrew plural assertions
+(`he four` with `many` and `he three` without). Verified against CLDR 48
+`release-48/common/supplemental/plurals.xml`: Hebrew is `one, two, other`,
+`many` was removed in CLDR 42. The code was right; the `he four` assertion was
+wrong and is gone.
+
+Tests 603 -> 602 (the four assertions that described the harmful behaviour were
+replaced by ones asserting it does not happen). 0 errors, 82 warnings on the
+real APK.

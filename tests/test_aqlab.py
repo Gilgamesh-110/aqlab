@@ -2152,25 +2152,27 @@ def test_lint_fix_rtl_enabled_pin(tmp):
           len(A.rtl_enabled(root)) == 2, str(A.rtl_enabled(root)))
     check("direction_pins does not name it", A.direction_pins(root) == [],
           str(A.direction_pins(root)))
-    check("fixer drops it anyway", A.fix_pin_local(root) == 2, "")
+    # A pin on an element with no physical attrs is a deliberate "keep this
+    # subtree LTR" marker, not a hole. ExoPlayer's control views carry one so
+    # play/pause/skip stay in playback order under Arabic; stripping it mirrors
+    # them. Measured on 8BP. The fixer must leave these alone entirely.
+    check("fixer leaves a bare pin alone", A.fix_pin_local(root) == 0, "")
     after = f.read_text(encoding="utf-8")
-    check("no pin left behind", "Direction=" not in after, after)
-    check("rtl_enabled fix is idempotent",
-          A.fix_pin_local(root) == 0 and A.rtl_enabled(root) == [],
+    check("pin survives", 'android:layoutDirection="ltr"' in after
+          and 'android:textDirection="ltr"' in after, after)
+    check("still reported as a warning", len(A.rtl_enabled(root)) == 2,
           str(A.rtl_enabled(root)))
 
-    # Two rows, two tags: the fixer edits each once and keeps both values.
+    # Two rows, two tags: both keep their pins and neither is touched.
     f.write_text(ns + '>' + NL +
                  '<TextView android:layoutDirection="ltr" android:text="x"/>' + NL +
                  '<Button android:layoutDirection="ltr" android:text="y"/>' + NL +
                  '</LinearLayout>', encoding="utf-8")
     check("both same-file rows are findings", len(A.rtl_enabled(root)) == 2,
           str(A.rtl_enabled(root)))
-    check("both fixed in one pass", A.fix_pin_local(root) == 2, "")
+    check("neither is fixed", A.fix_pin_local(root) == 0, "")
     after = f.read_text(encoding="utf-8")
-    check("both rows freed", after.count("Direction=") == 0, after)
-    check("the text of both rows survived the edit",
-          'android:text="x"' in after and 'android:text="y"' in after, after)
+    check("both pins survived", after.count('android:layoutDirection="ltr"') == 2, after)
 
     # Source order is lost: `direction_pins` and `rtl_enabled` are two lists, so
     # the queue was built source-first rather than in document order. Here the
@@ -2186,11 +2188,13 @@ def test_lint_fix_rtl_enabled_pin(tmp):
     check("one row from each source",
           len(A.direction_pins(root)) == 1 and len(A.rtl_enabled(root)) == 1,
           f"{A.direction_pins(root)} / {A.rtl_enabled(root)}")
-    check("both sources fixed in one pass", A.fix_pin_local(root) == 2, "")
+    check("only the physical row is fixed", A.fix_pin_local(root) == 1, "")
     after = f.read_text(encoding="utf-8")
     check("the physical row was migrated, not just unpinned",
           'android:paddingStart="4dp"' in after, after)
-    check("the text row kept its text", 'android:text="x"' in after, after)
+    check("the text row kept its text and its pin",
+          'android:text="x"' in after
+          and after.count('android:layoutDirection="ltr"') == 1, after)
 
     # A row both checks name - an `ltr` pin and physical attrs, with a text
     # widget beneath so `rtl_enabled` sees it too - is still one start tag.
@@ -2204,10 +2208,10 @@ def test_lint_fix_rtl_enabled_pin(tmp):
     check("the same row is named by both checks",
           len(A.direction_pins(root)) == 1 and len(A.rtl_enabled(root)) == 2,
           f"{A.direction_pins(root)} / {A.rtl_enabled(root)}")
-    check("the row named twice is still one edit", A.fix_pin_local(root) == 2, "")
+    check("only the physical row is edited", A.fix_pin_local(root) == 1, "")
     after = f.read_text(encoding="utf-8")
-    check("both rows are free of pins", "Direction=" not in after, after)
     check("the physical row was migrated", 'android:paddingStart="4dp"' in after, after)
+    check("the sibling's bare pin survived", after.count('android:layoutDirection="ltr"') == 1, after)
     check("mixed-source fix is idempotent", A.fix_pin_local(root) == 0, "")
 
 def test_direction_pins(tmp):

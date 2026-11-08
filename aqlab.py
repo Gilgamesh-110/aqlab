@@ -3775,9 +3775,14 @@ def fix_pin_local(proj, dry=False):
         tag, val = rest[0], rest[1]
         if kind in ("layoutDirection", "textDirection") and val == "ltr":
             broken.setdefault(path, []).append(tag)
-    for _attr, path, tag, _val in rtl_enabled(proj):
-        if _val == "ltr":
-            broken.setdefault(path, []).append(tag)
+    # `rtl_enabled` findings are deliberately NOT queued for removal. A pin on
+    # an element with no physical attributes is not a hole to fill and not a
+    # redundant literal: it is a deliberate "this subtree stays LTR" marker.
+    # Measured on 8BP: `--fix` stripped `layoutDirection="ltr"` from the
+    # ExoPlayer control views, which would mirror the play/pause/skip buttons
+    # in Arabic — the icons travel and only a pinned container holds them in
+    # playback order. ExoPlayer ships that pin on purpose. The check stays a
+    # warning so the author can decide; the fixer does not touch it.
     n = 0
     for rel, wanted in sorted(broken.items()):
         f = Path(proj) / rel
