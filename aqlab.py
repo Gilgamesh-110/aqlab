@@ -507,6 +507,17 @@ class Entry:
         return m.group(1) if m else self.body
 
 
+# `<TextView android:text="OK" ...>`: the tag the attribute sits on, the
+# attribute, and its quoted value. A literal newline is escaped in smali-built
+# XML in practice, so single-line matching is enough and stays cheap.
+RE_LITERAL_TEXT = re.compile(
+    r'<([A-Za-z_][\w.]*)\b[^>]*?\b(?:android:)?'
+    r'(text|hint|title|summary|subtitle|contentDescription|label|tabText)\s*=\s*'
+    r'"([^"]*)"')
+RE_REF_NAME = re.compile(r"@string/([A-Za-z0-9_.]+)")
+RE_LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
+
+
 def read_entries(path):
     """Extract <string> and <plurals><item> entries with their source text."""
     raw = Path(path).read_text(encoding="utf-8", errors="replace")
@@ -1858,6 +1869,10 @@ def scan_project(proj, args):
             tag_, val = _rest[0], _rest[1]
             print(f"  direction pin  : {where}:<{tag_}> layoutDirection=\"{val}\" on a "
                   f"horizontal row with physical attrs")
+    lit = literal_text_attrs(proj, jobs)
+    if lit:
+        print(f"  literal text   : {len(lit)} view(s) hold a literal — never reaches "
+              f"the locale values, move to `@string/`")
     vec = text_like_vectors(proj, jobs)
     if vec:
         print(f"  text vectors   : {len(vec)} — Latin glyphs baked into geometry, check by eye")
@@ -1929,6 +1944,69 @@ def gravity_parallel(sources, jobs):
     ctx = multiprocessing.get_context("spawn")
     with ctx.Pool(min(jobs, len(sources))) as pool:
         return [hit for chunk in pool.imap(_gravity_chunk, sources) for hit in chunk]
+
+
+def literal_text_attrs(proj, jobs=1):
+    """`android:text`/`hint`/`title`... holding a literal instead of a reference.
+
+    A literal never reaches `values-ar`, so it is the one class of string that
+    translation cannot cover however complete the table is — the usual way an
+    otherwise finished Arabic build still shows English. Only layout files: a
+    literal in `values/` is a default-locale default, not an untranslatable one.
+
+    A reference still counts as a literal when its name marks it
+    `translatable="false"`: the referenced string is never translated either.
+    A literal with no letter in it (`"5"`, `"0/250"`) is not text anyone
+    translates. Everything else, one letter or twenty, is a finding — measured
+    on the reference APK, all 9 were real.
+
+    Returns [(path, tag, attr, value, reason)] where reason is `literal` or
+    `untranslatable-ref`, and the whole list is report-only: `--fix` cannot
+    write a string resource into `values/` under a name it just invented.
+    """
+    refs = untranslatable_names(proj)
+    return _spread_pairs(text_sources(proj, ("layout*/*.xml",)),
+                         lambda pair: _literal_chunk(pair, refs), jobs)
+
+
+def untranslatable_names(proj):
+    """String names declared `translatable="false"` in the default locale."""
+    res = Path(proj) / "res"
+    out = set()
+    for folder in ("values",):
+        d = res / folder
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.xml")):
+            for e in read_entries(f):
+                if not e.translatable:
+                    out.add(e.key)
+    return out
+
+
+def _literal_chunk(pair, refs):
+    """`literal_text_attrs` for one (relative path, text) pair, picklable."""
+    name, txt = pair
+    out = []
+    for m in RE_LITERAL_TEXT.finditer(txt):
+        tag, attr, val = m.group(1), m.group(2), m.group(3)
+        val = val.strip()
+        if not val:
+            continue
+        # A reference is checked *before* the `@` skip: a `@string/` whose name
+        # is `translatable="false"` is never translated either, and it was
+        # exactly the row the earlier order silently dropped.
+        ref = RE_REF_NAME.fullmatch(val)
+        if ref:
+            if ref.group(1) in refs:
+                out.append((name, tag, attr, val, "untranslatable-ref"))
+            continue
+        if val.startswith("@") or val.startswith("?"):
+            continue
+        if RE_LETTER.search(val) is None:
+            continue
+        out.append((name, tag, attr, val, "literal"))
+    return out
 
 
 def text_like_vectors(proj, jobs=1):
@@ -3168,6 +3246,21 @@ def cmd_lint(args):
         add("warn", f"{path}:{attr}", f'"{value}" pins text to a physical side; '
                                       f'`aqlab lint --fix` rewrites it to start/end',
             "rtl-hardcoded")
+
+    # A literal `android:text` never reaches `values-<locale>`, so it is the one
+    # class of string the table cannot cover. Reported, never fixed: `--fix`
+    # would have to invent a resource name and write into `values/`.
+    for path, tag, attr, value, why in literal_text_attrs(proj, jobs):
+        shown = value if len(value) <= 40 else value[:37] + "..."
+        if why == "untranslatable-ref":
+            add("warn", f"{path}:<{tag}>",
+                f'{attr}="{shown}" points at a string marked translatable="false" '
+                f"— it stays English in {args.locale}", "literal-text")
+        else:
+            add("warn", f"{path}:<{tag}>",
+                f'{attr}="{shown}" is a literal in the layout — it never reaches '
+                f"values-{args.locale}; move it to `@string/` and translate",
+                "literal-text")
 
     # A pinned direction on a row that also carries left/right attributes is the
     # author working around RTL instead of supporting it — the pin wins over the

@@ -4149,6 +4149,78 @@ def test_lint_requires_a_default_locale(tmp):
         check("lint does not pass a project with no default locale", False, out.getvalue())
 
 
+def test_literal_text_attrs(tmp):
+    """A literal `android:text` is the one string translation cannot reach.
+
+    Measured on the reference APK: 9 literals, 5 of them the same word on five
+    different badges — each is its own finding, because each is its own view.
+    Every shape below is a false positive the rule must *not* raise.
+    """
+    root = Path(tmp) / "lit"
+    (root / "res" / "layout").mkdir(parents=True)
+    (root / "res" / "values").mkdir()
+    (root / "res" / "values" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<resources><string name="app_name">Pro</string>'
+        '<string name="ver" translatable="false">1.0</string></resources>',
+        encoding="utf-8")
+    (root / "res" / "layout" / "a.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?><LinearLayout>'
+        '<TextView android:text="PRO" android:id="@+id/one"/>'
+        '<TextView android:text="PRO" android:id="@+id/two"/>'
+        '<TextView android:text="5"/>'
+        '<TextView android:text="0/250"/>'
+        '<TextView android:text="@string/app_name"/>'
+        '<TextView android:text="@string/ver"/>'
+        '<TextView android:text="?"/>'
+        '<TextView android:text=""/>'
+        '<EditText android:hint=" Search "/>'
+        '</LinearLayout>', encoding="utf-8")
+    # A literal in values/ is a default-locale default, not an untranslatable
+    # one — the sweep is layout-only, so the `<TextView>` there is out of scope.
+    (root / "res" / "values" / "extra.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<resources><string name="x">nope</string>'
+        '<TextView android:text="PRO"/></resources>',
+        encoding="utf-8")
+
+    got = A.literal_text_attrs(root)
+    vals = [(Path(pth).name, tag, attr, v, why) for pth, tag, attr, v, why in got]
+    check("one finding per view, dupes kept", len(got) == 4, vals)
+    check("badge literal twice", vals.count(("a.xml", "TextView", "text", "PRO", "literal")) == 2, vals)
+    check("digit-only is not text", not any(v == "5" or v == "0/250" for _p, _t, _a, v, _w in vals), vals)
+    check("translatable reference is not a literal",
+          not any(v == "@string/app_name" for _p, _t, _a, v, _w in vals), vals)
+    check("untranslatable ref is one", ("a.xml", "TextView", "text", "@string/ver",
+                                        "untranslatable-ref") in vals, vals)
+    check("blank is not a finding", not any(v == "" for _p, _t, _a, v, _w in vals), vals)
+    check("hint is checked too", any(a == "hint" for _p, _t, a, _v, _w in vals), vals)
+    check("values/ is out of scope", not any(p.endswith("extra.xml") for p, *_r in got), got)
+    # The hint is trimmed before it is shown, so a padded literal reads clean.
+    check("value trimmed", any(("a.xml", "EditText", "hint", "Search", "literal") == v for v in vals), vals)
+
+    # Pooled and serial must be the same list, the same rule as every other sweep.
+    check("literal jobs parity", A.literal_text_attrs(root, 4) == got, "")
+
+    # The lint rule names it under its own rule, and no other rule claims it.
+    (root / "res" / "values-ar").mkdir()
+    (root / "res" / "values-ar" / "strings.xml").write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<resources><string name="app_name">طليعي</string></resources>', encoding="utf-8")
+    ns = argparse.Namespace(proj=str(root), locale="ar", quiet=True, verbose=False,
+                            fail_under=None, fail_under_file=None,
+                            report="json", out=str(Path(tmp) / "lit.json"))
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.cmd_lint(ns)
+    rep = json.loads((Path(tmp) / "lit.json").read_text(encoding="utf-8"))
+    lit = [f for f in rep["findings"] if f["rule"] == "literal-text"]
+    check("lint reports literal-text", len(lit) == 4, len(lit))
+    check("literal is a warning", all(f["level"] == "warn" for f in lit), lit)
+    check("message says it never reaches values-ar",
+          any("never reaches values-ar" in f["message"] for f in lit), lit)
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as _stack:
         _stack.callback(lambda: _SCRATCH and shutil.rmtree(_SCRATCH, ignore_errors=True))
@@ -4222,6 +4294,7 @@ def main():
         test_translate_reports_whether_the_tm_was_asked(tmp)
         test_translate_glossary_rewrites_a_term_only_in_the_source(tmp)
         test_lint_requires_a_default_locale(tmp)
+        test_literal_text_attrs(tmp)
     print(f"[OK] {len(PASSED)} checks passed")
     return 0
 
