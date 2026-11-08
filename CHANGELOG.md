@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-11-09
+
+### Fixed
+- **The PyPI description still said "Make an Android app Arabic".** The README,
+  the banner, the CLI and `CITATION.cff` were all repositioned to any-locale,
+  but the one string `pip search` and the PyPI project page show was missed. PyPI
+  metadata is immutable per version, so correcting it needed a new release —
+  0.2.0 is already published with the old description. A check now fails if
+  `pyproject.toml` describes the tool as Arabic-only or drops "any language".
+
 ## [0.2.0] — 2026-11-09
 
 ### Changed

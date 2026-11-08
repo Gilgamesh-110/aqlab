@@ -4,19 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aqlab"
-version = "0.2.0"
-description = "Make an Android app Arabic with correct RTL: layout direction, attribute migration and bidi linting in one command."
+version = "0.2.1"
+description = "Localize any Android app into any language, at any text direction: strings, RTL attribute migration, CLDR plurals and bidi linting in one command."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Gilgamesh-110" }]
-keywords = ["android", "arabic", "rtl", "i18n", "localization", "apk", "bidi", "right-to-left"]
+keywords = ["android", "localization", "i18n", "rtl", "ltr", "arabic", "hebrew", "translation", "apk", "bidi"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Natural Language :: Arabic",
+    "Natural Language :: Hebrew",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",

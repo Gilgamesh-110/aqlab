@@ -75,6 +75,49 @@ def main():
             print(f"    actual    : {g}")
 
 
+def check_package_metadata():
+    """pyproject.toml's description and keywords must not re-narrow the scope.
+
+    The 0.2.0 wheel went to PyPI still carrying "Make an Android app Arabic" --
+    the README, the banner and the CLI had all been repositioned while the one
+    string pip shows on its search page had not. PyPI metadata is immutable per
+    version, so that description needed a whole new release to correct.
+    """
+    t = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    bad = 0
+
+    m = re.search(r'^description = "(.+)"$', t, re.M)
+    if not m:
+        print("[FAIL] pyproject.toml: no description")
+        bad += 1
+    else:
+        d = m.group(1)
+        if "Make an Android app Arabic" in d:
+            print(f"[FAIL] pyproject.toml: description is still Arabic-only: {d[:70]}")
+            bad += 1
+        if "any language" not in d.lower():
+            print(f"[FAIL] pyproject.toml: description never says any language: {d[:70]}")
+            bad += 1
+
+    km = re.search(r"^keywords = \[(.+)\]$", t, re.M)
+    if not km:
+        print("[FAIL] pyproject.toml: no keywords")
+        bad += 1
+    else:
+        kws = [k.strip().strip('"') for k in km.group(1).split(",")]
+        if "arabic" in kws and "localization" not in kws:
+            print("[FAIL] pyproject.toml: keywords lead with Arabic, no localization")
+            bad += 1
+        if len(kws) < 8:
+            print(f"[FAIL] pyproject.toml: only {len(kws)} keywords")
+            bad += 1
+
+    if bad:
+        return 1
+    print("[OK] pyproject metadata describes the any-locale tool")
+    return 0
+
+
 def check_plural_table():
     """The locale table in the README must match what the code returns.
 
@@ -170,6 +213,7 @@ def check_banner_numbers():
 
 if __name__ == "__main__":
     rc = main() or 0
+    rc |= check_package_metadata() or 0
     rc |= check_plural_table() or 0
     rc |= check_banner_numbers() or 0
     sys.exit(rc)
