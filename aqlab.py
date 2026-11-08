@@ -1374,14 +1374,24 @@ def cmd_scaffold(args):
     tsv = Path(args.proj) / f"values-{args.locale}.tsv"
     write_tsv(tsv, rows, merged, sink=sink)
 
+    # `pending` counts rows that still have no text, not `entries - have`.
+    # `have` can be LONGER than `entries`: a locale with more plural categories
+    # than the source gets a synthesised entry per extra category (Arabic: 2
+    # source entries become 6 rows), so the subtraction went negative and
+    # printed `translated: 6  pending: -4`. Counting unfilled rows is the only
+    # number that is true for every locale.
+    def _counts():
+        filled = sum(1 for r in rows if (r.text or "").strip())
+        return f"translated: {filled}   pending: {len(rows) - filled}"
+
     if sink.dry:
         print(f"[DRY] would scaffold {len(entries)} entries -> {out_dir}")
-        print(f"      translated: {len(have)}   pending: {len(rows) - len(have)}")
+        print("      " + _counts() + f"   ({len(rows)} plural/string rows total)")
         sink.report()
         return 0
     sink.commit()
     print(f"[DONE] scaffolded {len(entries)} entries from {len(groups)} file(s) -> {out_dir}")
-    print(f"       translated: {len(have)}   pending: {len(rows) - len(have)}")
+    print("       " + _counts() + f"   ({len(rows)} plural/string rows total)")
     print(f"       translate:  {tsv}")
     print(f"       then:       aqlab apply {args.proj} --tsv {tsv}")
 

@@ -1035,6 +1035,53 @@ def test_forced_scaffold_keeps_six_plural_forms(proj, tmp):
           (root / "aqlab-backup-ar" / "strings.xml").exists())
 
 
+def test_pending_never_exceeds_entries(proj, tmp):
+    """`pending` must count entries, not table rows.
+
+    `plural_rows_for` emits one row per (plural, quantity), so a locale with
+    more plural categories than the source produces MORE rows than there are
+    entries: Hebrew printed `1426 entries, pending 1435` and Arabic 1462. Both
+    numbers were right and the line read as a contradiction. `pending` now
+    counts entries; the row count is reported separately, labelled.
+    """
+    root = Path(tmp) / "pending"
+    res = root / "res"
+    (res / "values").mkdir(parents=True)
+    body = ['<?xml version="1.0" encoding="utf-8"?><resources>']
+    body.append('<plurals name="files"><item quantity="one">%d file</item>'
+                '<item quantity="other">%d files</item></plurals>')
+    for i in range(5):
+        body.append(f'<string name="s{i}">v{i}</string>')
+    body.append("</resources>")
+    (res / "values" / "strings.xml").write_text("".join(body), encoding="utf-8")
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+        ' package="com.x"><application android:label="x"/></manifest>', encoding="utf-8")
+
+    entries = [e for e in A.read_locale_entries(res, ["values"]) if e.translatable]
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        for loc in ("he", "ar", "ja"):
+            rows = A.plural_rows_for(entries, loc)
+            # the bug: for he and ar rows outnumber entries; ja is the reverse
+            expected = len(rows) > len(entries) if loc in ("he", "ar") else True
+            check(f"{loc}: rows vs entries regime as expected", expected,
+                  f"{len(rows)} rows vs {len(entries)} entries")
+            A.cmd_scaffold(argparse.Namespace(proj=str(root), locale=loc, tsv=None,
+                                              force=True, dry_run=True, quiet=True))
+    text = out.getvalue()
+    for loc in ("he", "ar", "ja"):
+        block = text.split(f"values-{loc}")[1] if f"values-{loc}" in text else text
+        m = re.search(r"pending: (-?\d+)", block)
+        check(f"{loc}: pending printed", m is not None, block[:200])
+        if not m:
+            continue
+        pending = int(m.group(1))
+        check(f"{loc}: pending is not negative", pending >= 0, f"pending={pending}")
+        check(f"{loc}: pending <= entries", pending <= len(entries),
+              f"pending={pending} entries={len(entries)}")
+
+
 def test_dry_run_changes_nothing(proj, tmp):
     """`--dry-run` must print the plan and touch not one byte.
 
@@ -4477,6 +4524,7 @@ def main():
         test_locale_config(tmp)
         test_text_like_vectors(tmp)
         test_forced_scaffold_keeps_six_plural_forms(proj, tmp)
+        test_pending_never_exceeds_entries(proj, tmp)
         test_dry_run_changes_nothing(proj, tmp)
         test_non_resource_files_are_reported(tmp)
         test_coverage_per_file_and_gates(tmp)
