@@ -37,8 +37,8 @@
     <text x="28" y="358">  dry: res/layout/mtrl_picker_actions.xml: <tspan fill="#d29922">1 attribute(s)</tspan></text>
     <text x="28" y="380">  dry: res/layout/mtrl_picker_dialog.xml: <tspan fill="#d29922">2 attribute(s)</tspan></text>
     <text x="28" y="402">  dry: res/layout/mtrl_picker_fullscreen.xml: <tspan fill="#d29922">2 attribute(s)</tspan></text>
-    <text x="28" y="424">  dry: res/layout/select_dialog_multichoice_material.xml: <tspan fill="#d29922">3 attribute(s)</tspan></text>
-    <text x="28" y="446">  <tspan fill="#6e7681">…</tspan></text>
+    <text x="28" y="424">  dry: res/values/styles.xml: <tspan fill="#d29922">31 attribute(s)</tspan></text>
+    <text x="28" y="446">  <tspan fill="#6e7681">… 25 more file(s)</tspan></text>
     <text x="28" y="468"><tspan fill="#3fb950">[DONE]</tspan> <tspan fill="#f0f6fc">29 file(s)</tspan> updated</text>
 
     <text x="28" y="512"><tspan fill="#3fb950">$</tspan> <tspan fill="#f0f6fc">aqlab lint</tspan> app/ <tspan fill="#8b949e">--locale ar</tspan></text>
