@@ -625,7 +625,7 @@ its test fails when the code is removed.
   output byte-for-byte identical to the previous implementation.
 
 ### Added
-- Brand kit in `assets/`: `logo.svg`, `banner.svg`, `features.svg`,
+- Brand kit in `assets/`: `logo.svg`, `banner-v3.svg`, `features.svg`,
   `before-after.svg` and `og-card.svg` (plus rendered PNGs), all drawn on the
   GitHub dark palette so they sit flush with the README.
 
