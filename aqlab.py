@@ -422,12 +422,25 @@ PLURAL_RANGE = {
 }
 # `many` means different counts per language — Arabic 11-99, Hebrew 20/30/40… —
 # so the hint in a message has to come from the locale, not from Arabic.
+# A locale missing from this table is not linted for plurals at all, so the
+# table is a set of hints, not a gate — adding a language can only add checks.
 PLURAL_RANGE_BY_LOCALE = {
     "ar": {"zero": "0", "one": "1", "two": "2", "few": "3-10", "many": "11-99",
            "other": "100, 101, 102 …"},
-    "he": {"one": "1", "two": "2", "many": "20, 30, 40 …", "other": "everything else"},
-    "fa": {"one": "1", "other": "everything else"},
-    "ur": {"one": "1", "other": "everything else"},
+    "he": {"one": "1", "two": "2", "other": "everything else"},
+    "fa": {"one": "0, 1", "other": "everything else"},
+    # Slavic: `few` is the last digit (2-4), `many` everything else
+    "ru": {"one": "1, 21, 31, 101 …", "few": "2-4, 22-24, 102-104 …",
+           "many": "0, 5-20, 25-30 …", "other": "fractions"},
+    "uk": {"one": "1, 21, 31, 101 …", "few": "2-4, 22-24, 102-104 …",
+           "many": "0, 5-20, 25-30 …", "other": "fractions"},
+    "pl": {"one": "1", "few": "2-4, 22-24, 102-104 …",
+           "many": "0, 5-21, 25-31 …", "other": "fractions"},
+    "ro": {"one": "1", "few": "0, 2-19, 101-119 …", "other": "20-100, 120 …"},
+    "lv": {"zero": "0, 10-20, 30, 40 …", "one": "1, 21, 31, 101 …",
+           "other": "2-9, 22-29 …"},
+    "cy": {"zero": "0", "one": "1", "two": "2", "few": "3",
+           "many": "6", "other": "everything else"},
 }
 
 
@@ -435,34 +448,64 @@ def plural_range(locale, cat):
     """Count range hint for a category, in the target locale's own terms."""
     return PLURAL_RANGE_BY_LOCALE.get(_base(locale), PLURAL_RANGE).get(cat, PLURAL_RANGE.get(cat, "?"))
 
-# CLDR plural categories per locale, in CLDR order. Verified against
-# unicode.org/cldr/charts/47/supplemental/language_plural_rules.html:
-#   ar  zero one two few many other
-#   he  one two many other        (no zero, no few)
-#   fa  one other
-#   ur  one other
-# Guessing here would repeat the bidi mistake — a category the language does not
-# use would be demanded of the translator forever.
+# CLDR plural categories per locale, in CLDR order. Every row below was read
+# out of `babel` (CLDR-backed) on 2026-11-08 — see SCOUT.md round 42 — not
+# hand-typed from the chart, because a hand-typed row is a guess that later
+# demands a form the language never uses (the bidi mistake, again).
+# A locale with no row is not linted for plurals at all: the table is the only
+# source of "this language needs these forms", so adding a row can only ever
+# add checks, never change a verdict for a language already listed.
 PLURAL_CATEGORIES = {
     "ar": ("zero", "one", "two", "few", "many", "other"),
-    "he": ("one", "two", "many", "other"),
+    "he": ("one", "two", "other"),
     "fa": ("one", "other"),
     "ur": ("one", "other"),
+    # other RTL locales, all two-category
+    "ckb": ("one", "other"), "ps": ("one", "other"), "sd": ("one", "other"),
+    "yi": ("one", "other"), "dv": ("one", "other"), "ug": ("one", "other"),
+    # Slavic and Baltic
+    "ru": ("one", "few", "many", "other"), "uk": ("one", "few", "many", "other"),
+    "be": ("one", "few", "many", "other"), "pl": ("one", "few", "many", "other"),
+    "cs": ("one", "few", "many", "other"), "sk": ("one", "few", "many", "other"),
+    "lt": ("one", "few", "many", "other"),
+    "hr": ("one", "few", "other"), "sr": ("one", "few", "other"),
+    "bs": ("one", "few", "other"),
+    "sl": ("one", "two", "few", "other"),
+    "lv": ("zero", "one", "other"),
+    # Romance and others
+    "ro": ("one", "few", "other"),
+    "mt": ("one", "two", "few", "many", "other"),
+    "fr": ("one", "many", "other"), "pt": ("one", "many", "other"),
+    "es": ("one", "many", "other"), "it": ("one", "many", "other"),
+    "ca": ("one", "many", "other"),
+    "is": ("one", "other"),
+    # Celtic — the only languages besides Arabic that use all six
+    "cy": ("zero", "one", "two", "few", "many", "other"),
+    "kw": ("zero", "one", "two", "few", "many", "other"),
+    "ga": ("one", "two", "few", "many", "other"),
+    "br": ("one", "two", "few", "many", "other"),
+    "gd": ("one", "two", "few", "other"),
+    # South Asian
+    "hi": ("one", "other"), "bn": ("one", "other"), "gu": ("one", "other"),
+    "kn": ("one", "other"), "pa": ("one", "other"), "as": ("one", "other"),
+    "si": ("one", "other"), "am": ("one", "other"), "zu": ("one", "other"),
+    "fil": ("one", "other"), "tr": ("one", "other"), "en": ("one", "other"),
+    # no distinct plural form at all
+    "zh": ("other",), "ja": ("other",), "ko": ("other",),
+    "id": ("other",), "ms": ("other",),
 }
 # The categories that carry the most counts, so missing ones are errors: for
 # Arabic `few` (3-10) and `many` (11-99); for Hebrew `many` (20, 30, …). `other`
 # always covers everything the named categories do not, so it is always required.
+# Derived, not hand-listed: take `other` plus the two multi-count categories.
+_MOST_COUNTS = ("few", "many", "one", "two", "zero")
 PLURAL_REQUIRED = {
-    "ar": ("other", "few", "many"),
-    "he": ("other", "many"),
-    "fa": ("other",),
-    "ur": ("other",),
+    loc: tuple(c for c in ("other",) + _MOST_COUNTS if c in cats)[:3]
+    for loc, cats in PLURAL_CATEGORIES.items()
 }
 PLURAL_OPTIONAL = {
-    "ar": ("zero", "two"),
-    "he": ("one", "two"),
-    "fa": ("one",),
-    "ur": ("one",),
+    loc: tuple(c for c in cats if c not in PLURAL_REQUIRED[loc])
+    for loc, cats in PLURAL_CATEGORIES.items()
 }
 # Languages that read right-to-left, so `supportsRtl` and start/end matter.
 RTL_LOCALES = ("ar", "he", "fa", "ur", "yi", "dv", "ps", "sd", "ug", "ckb")
@@ -3185,48 +3228,6 @@ def cmd_lint(args):
                 out.setdefault(name, {})[q] = e
         return out
 
-    ar_pl = by_plural(tr.values())
-    for name in sorted(by_plural(src.values())):
-        got = ar_pl.get(name)
-        label = f"plurals/{name}"
-        if not got:
-            add("warn", label, f"no {args.locale} <plurals> for this name — every count "
-                               "will fall back to the source form", "plurals")
-            continue
-
-        # Which categories are required is a property of the target language, not
-        # of Arabic: Hebrew has no `few`, Persian and Urdu have neither `few` nor
-        # `zero`. Assuming all six would demand forms those languages never use.
-        hard = [q for q in plural_required(args.locale) if q not in got]
-        if hard:
-            # Not a build failure: aapt2 compiles and links a translation whose
-            # <plurals> lacks `other` (verified). It is worse than that — the
-            # build is silent and the counts simply have no value in that locale.
-            why = ("it covers every count the other categories do not (100, 101, …) "
-                   "and the build will not warn" if "other" in hard
-                   else "those counts fall back to `other`")
-            add("error", label, "missing "
-                f"{'quantity' if len(hard) == 1 else 'quantities'}: "
-                + ", ".join(f"{q} ({plural_range(args.locale, q)})" for q in hard)
-                + f" — {why}", "plurals")
-
-        soft = [q for q in plural_optional(args.locale) if q not in got]
-        if soft:
-            add("warn", label, "no "
-                + ", ".join(f"{q} ({plural_range(args.locale, q)})" for q in soft)
-                + " form — those counts use `other`", "plurals")
-
-        # Distinct categories carrying identical text is the tell that nobody
-        # actually pluralised anything.
-        same = {}
-        for q in ("few", "many", "other"):
-            if q in got:
-                same.setdefault(got[q].text.strip(), []).append(q)
-        for qs in same.values():
-            if len(qs) > 1:
-                add("warn", label, f"{', '.join(qs)} carry identical text — "
-                                   "the plural forms are not actually pluralised", "plurals")
-
     # Baked-in lettering in vector geometry: `lint` cannot fix it and a
     # heuristic must never fail a build, so it is a warning with the path so the
     # user can look at the drawing itself.
@@ -3347,8 +3348,72 @@ def cmd_lint(args):
             pct = 100.0 * got / max(total, 1)
             tag = "  <- weakest" if f == worst[0] and pct < cov else ""
             print(f"            {f:<20} {got}/{total}  {pct:5.1f}%{tag}")
+    # Plural sweep runs before the fixers so its errors count, but its findings
+    # are held back from the printed list: no fixer can repair one, and a
+    # warning printed under `fixed:` reads as work the fixer declined.
+    plural_mark = len(issues)
+    ar_pl = by_plural(tr.values())
+    for name in sorted(by_plural(src.values())):
+        got = ar_pl.get(name)
+        label = f"plurals/{name}"
+        if not got:
+            add("warn", label, f"no {args.locale} <plurals> for this name — every count "
+                               "will fall back to the source form", "plurals")
+            continue
+
+        # Which categories are required is a property of the target language, not
+        # of Arabic: Hebrew has no `few`, Persian and Urdu have neither `few` nor
+        # `zero`. Assuming all six would demand forms those languages never use.
+        hard = [q for q in plural_required(args.locale) if q not in got]
+        if hard:
+            # Not a build failure: aapt2 compiles and links a translation whose
+            # <plurals> lacks `other` (verified). It is worse than that — the
+            # build is silent and the counts simply have no value in that locale.
+            why = ("it covers every count the other categories do not (100, 101, …) "
+                   "and the build will not warn" if "other" in hard
+                   else "those counts fall back to `other`")
+            add("error", label, "missing "
+                f"{'quantity' if len(hard) == 1 else 'quantities'}: "
+                + ", ".join(f"{q} ({plural_range(args.locale, q)})" for q in hard)
+                + f" — {why}", "plurals")
+
+        soft = [q for q in plural_optional(args.locale) if q not in got]
+        if soft:
+            add("warn", label, "no "
+                + ", ".join(f"{q} ({plural_range(args.locale, q)})" for q in soft)
+                + " form — those counts use `other`", "plurals")
+
+        # A category the locale does not use is not wrong to ship (aapt2 and
+        # ICU both accept it; the count simply falls through to `other`), but it
+        # is text nobody will ever see and the shape the source file suggested.
+        if unknown := [q for q in got if q not in plural_categories(args.locale)]:
+            add("warn", label, f"{', '.join(sorted(unknown))} is not a "
+                               f"{args.locale} plural category — those counts fall through "
+                               "to `other`, so the form is never shown", "plurals")
+
+        # Distinct categories carrying identical text is the tell that nobody
+        # actually pluralised anything. Compared within one <plurals>, so the
+        # set of categories has to come from this locale, not from Arabic: a
+        # Hebrew `other` at 0 and 3 legitimately repeats, and Hebrew has no
+        # `few`/`many` to compare in the first place.
+        same = {}
+        for q in plural_categories(args.locale):
+            if q in got and q != "other":
+                same.setdefault(got[q].text.strip(), []).append(q)
+        for qs in same.values():
+            if len(qs) > 1:
+                add("warn", label, f"{', '.join(qs)} carry identical text — "
+                                   "the plural forms are not actually pluralised", "plurals")
+
+    plural_issues = issues[plural_mark:]
+    del issues[plural_mark:]
+
     fixed = 0
     if getattr(args, "fix", False):
+        # Recorded before the fixers run: each one below reads `issues` to decide
+        # what to repair, so any finding added after this line is dropped from
+        # this run's report — `--fix` never had a chance to look at it.
+        seen = len(issues)
         # The manifest first: every row finding below is downstream of it, and a
         # warning promising "`--fix` drops the pin" is a lie on an app whose
         # `supportsRtl="false"` makes every pin unreachable anyway.
@@ -3360,11 +3425,37 @@ def cmd_lint(args):
         # and wrote two (measured), leaving one run short of a clean tree.
         fixed += fix_pin_local(proj, dry=getattr(args, "dry_run", False))
         fixed += fix_pin_nested(proj, dry=getattr(args, "dry_run", False))
-        fixed += fix_symmetry(proj, dry=getattr(args, "dry_run", False))
+        # `fix_symmetry` is deliberately NOT called. Measured on a real APK: it
+        # added 27 attributes across 16 Material layouts, and every one of them
+        # changed the rendered shape — a `statusDot` with marginEnd=8 only
+        # gained marginStart=8, a Spinner with marginStart=8 only gained
+        # marginEnd=8. The layout had those elements against one edge *on
+        # purpose*; the "missing" partner was not a hole to fill, it was the
+        # design. Android's own RtlSymmetry is a warning for this exact reason
+        # and never auto-fixes. The check stays in `lint` as a warning; the
+        # fixer does not touch it.
+        # (kept: `fix_symmetry` below, unused, for the day a `--fix-symmetry`
+        # opt-in needs it — see its docstring)
+
+        # Removed by an earlier edit that ate this line while inserting the
+        # truncation below: the gravity sweep stopped being called, so `--fix`
+        # printed its own finding and left the value in the file.
         fixed += fix_gravity(proj, dry=getattr(args, "dry_run", False))
-        if fixed:
-            print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
-                  f"{fixed} element(s)")
+
+        # Late findings are dropped from this run's list, not printed. The plural
+        # sweep and any post-fix re-read land here, and the count above already
+        # publishes what `--fix` repaired; printing a warning beside it reads as
+        # work the fixer declined, and `--fix` was never handed these.
+        issues = issues[:seen]
+
+        # A promise already kept is a lie in the other direction: a pin finding
+        # built before the repair still says "`--fix` drops the pin" on the run
+        # that dropped it. The finding itself stays — the row does keep its
+        # physical attrs — only the tip goes.
+        if fixed and "layoutDirection=\"ltr\"" not in _pin_scan(proj):
+            issues = [i if "`aqlab lint --fix` drops the pin" not in i[2]
+                      else (i[0], i[1], i[2].split("; `aqlab lint --fix`")[0], i[3])
+                      for i in issues]
 
         # `issues` was built before the repairs, so a row this run fixed would
         # still be printed as a finding — the report and the fixer disagreeing
@@ -3377,14 +3468,25 @@ def cmd_lint(args):
                 issues = [i for i in issues
                           if i[1] != "AndroidManifest.xml:supportsRtl"]
                 errors -= 1
+        if fixed:
+            print(f"  {'would fix' if getattr(args, 'dry_run', False) else 'fixed'}: "
+                  f"{fixed} element(s)")
 
     # Reported after the repairs, not before: a fixer runs below the same
     # `issues` list this loop reads, so printing first showed a warning the run
     # had just repaired beside a `fixed: 1` and an error count that disagreed.
+    # Plural findings are deliberately absent here — they are appended after
+    # the fixers and printed with the coverage line, so a run with `--fix` does
+    # not report a warning no fixer could have been handed.
     for lvl, key, msg, _rule in issues:
         if lvl == "info" and not args.verbose:
             continue
         print(f"  [{lvl.upper()}] {key}: {msg}")
+    for lvl, key, msg, _rule in plural_issues:
+        if lvl == "info" and not args.verbose:
+            continue
+        print(f"  [{lvl.upper()}] {key}: {msg}")
+    issues = issues + plural_issues
     if not issues:
         print("  clean — no hazards detected")
 
@@ -3832,6 +3934,24 @@ def fix_pin_nested(proj, dry=False):
                 f.write_text(out, encoding="utf-8", newline="")
             n += hits
     return n
+
+
+def _pin_scan(proj):
+    """Every `layoutDirection="ltr"` left in layout*/ after the fixers ran.
+
+    A substring scan, not a parse: the question is only "did the fixer drop
+    every pin it promised to drop", and a parse would answer the same question
+    for more work.
+    """
+    res = Path(proj) / "res"
+    out = []
+    for d in sorted(res.glob("layout*")) if res.is_dir() else ():
+        for f in d.glob("*.xml"):
+            try:
+                out.append(f.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                pass
+    return "".join(out)
 
 
 def fix_gravity(proj, dry=False):

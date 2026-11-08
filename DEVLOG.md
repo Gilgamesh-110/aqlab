@@ -189,3 +189,27 @@ flag Latin text inside values-ar without a whitelist). Verified first that the
 obvious gap was already closed: `translatable="false"` and `formatted="false"`
 are handled, and the reference APK has zero of either, so they cannot be
 measured there. Tests unchanged 595, 0 errors / 82 warnings, gate untouched.
+
+## Round 42 — phase B eval (pyicu) -> tables corrected
+pyicu would not build on this host (no ICU headers), so Babel 2.18 (same CLDR
+data, pure Python) was used instead. Result: our `he` plural table was wrong —
+CLDR Hebrew is one/two/other, we required `many` and would have asked every
+Hebrew translator for a form the language never selects. `fa`/`ur` correct.
+`ar` correct. Table grew from 4 locales to 52, every row read from Babel's
+samples rather than typed from the chart; `plural_required` is now derived
+(`other` plus the two multi-count categories) instead of hand-listed, so a new
+row cannot disagree with its own category set.
+
+Two lint bugs found while wiring it:
+- the "identical text" plural warning compared only few/many/other, assuming
+  every locale has them; it now compares the locale's own categories and skips
+  `other` (which legitimately repeats).
+- a category the locale does not use (`few` in Hebrew) is now reported, since
+  those counts silently fall through to `other`.
+- a `--fix` run printed a pin warning still advertising "`aqlab lint --fix`
+  drops the pin" after the run had dropped it; the tip is scrubbed when the
+  tree has no `layoutDirection="ltr"` left.
+
+Note: an editing mishap dropped the `fix_gravity` call from `--fix` and the
+`force_fix_gravity` test caught it immediately — the gravity sweep is back.
+Tests 595 -> 603, real APK unchanged at 0 errors / 82 warnings.
