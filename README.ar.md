@@ -1,8 +1,12 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="aqlab — تعريب أندرويد واتجاه RTL" width="100%">
+<img src="assets/logo.svg" alt="aqlab" width="88" height="88">
 
-**اقلب أي تطبيق أندرويد للعربي — باتجاه RTL صحيح — بأمر واحد.**
+<img src="assets/banner-v3.svg" alt="aqlab — توطين أي تطبيق أندرويد لأي لغة وأي اتجاه نص" width="100%">
+
+**أي لغة. أي اتجاه. بأمر واحد.**
+
+حوّل أي APK أندرويد لبناء مترجم — النصوص، التخطيطات، دلالات RTL، معاد البناء والتوقيع.
 
 [![tests](https://github.com/Gilgamesh-110/aqlab/actions/workflows/ci.yml/badge.svg)](https://github.com/Gilgamesh-110/aqlab/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/aqlab.svg?color=blue)](https://pypi.org/project/aqlab/)
@@ -17,7 +21,11 @@
 
 ---
 
-ترجمة التطبيق للعربي هي النص السهل. النص اللي يغلطون فيه الجميع هو الواجهة:
+العربية هي أصعب حالة، واللي بُنيت عليها كل الفحوصات — مو حدود الأداة.
+`--locale` يقبل أي رمز BCP-47: **227** لغة إلها جدول جمع CLDR، و**258** لغة
+اتجاهها من اليمين لليسار.
+
+ترجمة التطبيق هي النص السهل. النص اللي يغلطون فيه الجميع هو الواجهة:
 القائمة الجانبية تبقى عاليسار، سهم الرجوع لسا يشير لليسار، شريط التقدم يمتلئ
 بالعكس، الـ`%d` يضيع، وعلامات الترقيم تنتقل للجهة الغلط.
 
@@ -26,6 +34,10 @@
 
 <p align="center">
   <img src="assets/features.svg" alt="اتجاه الواجهة، ترحيل الخصائص، فحص مخاطر bidi، تهريب الموارد" width="100%">
+</p>
+
+<p align="center">
+  <img src="assets/demo.svg" alt="جلسة طرفية: aqlab scan يبلّغ 73 خاصية left/right قديمة، aqlab rtl --dry-run يعدّل 29 ملف، aqlab lint يبلّغ 0 خطأ و82 تحذير" width="100%">
 </p>
 
 ## جرّبها بسرعة
@@ -282,7 +294,7 @@ aqlab all app.apk --tsv ar.tsv --ks release.keystore --ks-alias release
 
 `scaffold` يكتب `res/xml/locales_config.xml` ويعدّد كل مجلدات `values-*` اللغوية،
 ويوجّه `android:localeConfig` عليه، فيطلع التطبيق بمنتقي لغة التطبيق بالنظام.
-بلا هذا، مستخدم جواله إنجليزي ما يقدر يحوّل هذا التطبيق وحده للعربية.
+بلا هذا، مستخدم جواله إنجليزي ما يقدر يحوّل هذا التطبيق وحده للغته.
 
 ```xml
 <locale-config xmlns:android="http://schemas.android.com/apk/res/android">
