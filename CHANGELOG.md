@@ -4,6 +4,34 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] — 2026-11-09
+
+### Fixed
+- **`--tm` crashed on the TSV that `scaffold` writes.** `load_tm` assumed JSON:
+  the file produced by `aqlab scaffold app -l ar` (values-ar.tsv) raised
+  `JSONDecodeError` on line 1 when handed straight back as memory -- which is the
+  obvious next move, and what the README suggests. It now recognises a TSV by
+  shape, skips its header, and still reads both JSON forms. Found by running the
+  tool on a real APK for the demo video, not by reading the code.
+
+### Added
+- **Landing page: language switch, demo video, comparison, real-APK diff.**
+  - Arabic/English switch. Arabic stays in the markup and English sits beside it
+    in `data-en`, so the page is readable and indexable before any JS runs and a
+    visitor without JS gets Arabic. The Arabic is snapshotted before the first
+    swap -- a returning visitor with `en` stored would otherwise have English
+    recorded as the original and the way back lost.
+  - An 11-second video built from real command output: every frame is rendered
+    after actually running the command, so a number that changes in the tool
+    changes in the clip.
+  - A comparison against doing the same work by hand, and a before/after diff of
+    `res/layout/abc_list_menu_item_layout.xml` from `ChessAssistant 1.1.10` --
+    102 left/right attributes over 29 files, 5.2s, zero left behind.
+
+### Fixed
+- Every `<bdi>` around Latin text inside Arabic prose: `CLDR`, `Asymmetric` and
+  `MissingFormatArgument` were reordering mid-sentence in the RTL table.
+
 ## [0.2.2] — 2026-11-09
 
 ### Fixed

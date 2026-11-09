@@ -40,7 +40,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 # --------------------------------------------------------------------------
 # Unicode classes
@@ -1509,14 +1509,41 @@ def cmd_apply(args):
 
 
 def load_tm(path):
-    """`{"en": "ar"}` or `[{"source":..., "target":...}]` -> list of pairs.
+    """`{"en": "ar"}`, `[{"source":..., "target":...}]`, or a TSV -> list of pairs.
 
-    Two shapes, because the tables people already keep come in both: a JSON
-    object keyed by the source string, and the array Gettext and Android Studio
-    export use. Order is kept - an exact match is unambiguous, but a fuzzy one
-    scores every candidate, and a stable order makes the report reproducible.
+    Three shapes. The two JSON ones, because the tables people already keep come
+    in both: a JSON object keyed by the source string, and the array Gettext and
+    Android Studio export use. And TSV, because that is the format `scaffold`
+    writes -- `aqlab scaffold app -l ar` produces values-ar.tsv, and the obvious
+    next move is to hand that same file back as memory. Assuming JSON there
+    crashed with a JSONDecodeError on a file the tool itself had just written.
+
+    Order is kept - an exact match is unambiguous, but a fuzzy one scores every
+    candidate, and a stable order makes the report reproducible.
     """
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw = Path(path).read_text(encoding="utf-8")
+
+    # A TSV is recognised by its shape, not its extension: the file this tool
+    # writes has no leading '{' or '[' and carries a "key<TAB>source<TAB>" header.
+    head = raw.lstrip("\ufeff \t\r\n")[:1]
+    if head not in ("{", "["):
+        out = []
+        rows = raw.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        for i, line in enumerate(rows):
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            cells = line.split("\t")
+            if len(cells) < 3:
+                continue
+            # header row
+            if i == 0 and cells[0].strip().lower() in ("key", "id", "name"):
+                continue
+            src, dst = cells[1], cells[2]
+            if src.strip() and dst.strip():
+                out.append((src, dst))
+        return out
+
+    data = json.loads(raw)
     if isinstance(data, dict):
         return [(str(k), str(v)) for k, v in data.items()
                 if str(k).strip() and str(v).strip()]

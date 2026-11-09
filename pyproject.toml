@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aqlab"
-version = "0.2.2"
+version = "0.2.3"
 description = "Localize any Android app into any language, at any text direction: strings, RTL attribute migration, CLDR plurals and bidi linting in one command."
 readme = "README.md"
 requires-python = ">=3.9"
