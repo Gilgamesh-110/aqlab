@@ -462,3 +462,34 @@ suite is the contract, not a nested run.
 anything. Also: look at the badge at the top of your own repo — it is a claim, and
 it was red.
 
+## Round 49 — a page for the visitor who has not decided to read
+
+The README is written for someone who already chose to read it: requirements,
+then the command list, then the caveats. That is the wrong order for the other
+visitor -- the one who lands from a link and gives the page ten seconds.
+
+So: `site/index.html`, one static file, no build step, no dependencies, no JS
+beyond a copy button with a textarea fallback.
+
+**What is above the fold** on a 390x844 phone, measured: H1 at y=90, the install
+line at 252, both buttons at 327, all four stats at 392. Everything a visitor
+needs to decide is inside the first screen.
+
+**What got cut in the first version.** The banner image was the first thing on
+mobile -- it pushed the headline below the fold, so the visitor saw a picture of
+the product before the sentence explaining it. It is now hidden under 620px. The
+sub-headline said "بناء موقّع", which reads as "building a website"; it now says
+"ملف APK موقّع جاهز". There was no call to action anywhere in the hero, only at
+the very bottom of the page.
+
+**The numbers are the measured ones**: 227 locales, 258 RTL tags, 653 checks, 0
+dependencies. The terminal block is real output from `examples/demo-project`,
+pasted, not an illustration of what output might look like.
+
+Zero horizontal overflow at 390, 768 and 1280. Published from `site/` through
+Pages; the workflow checks that every asset the HTML references exists on disk
+and that no credential-shaped string is in the tree before it uploads.
+
+**Also fixed:** `aqlab --help` ended with `docs: https://github.com/<you>/aqlab`.
+A placeholder. It shipped in every release.
+

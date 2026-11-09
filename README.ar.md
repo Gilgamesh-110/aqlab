@@ -15,7 +15,7 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](#المتطلبات)
 
-**العربية** · [English](README.md)
+**العربية** · [English](README.md) · [**صفحة المشروع**](https://gilgamesh-110.github.io/aqlab/)
 
 </div>
 

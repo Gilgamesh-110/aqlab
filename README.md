@@ -18,8 +18,9 @@ Turn any Android APK into a localized build — strings, layouts, RTL semantics,
 [![Changelog](https://img.shields.io/badge/changelog-keep_a_changelog-orange.svg)](CHANGELOG.md)
 [![release](https://img.shields.io/github/v/release/Gilgamesh-110/aqlab?sort=date&color=blue)](https://github.com/Gilgamesh-110/aqlab/releases/latest)
 [![platform](https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20macos-lightgrey.svg)](#requirements)
+[![site](https://img.shields.io/badge/site-live-brightgreen.svg)](https://gilgamesh-110.github.io/aqlab/)
 
-[العربية](README.ar.md) · **English**
+[العربية](README.ar.md) · **English** · [**Landing page**](https://gilgamesh-110.github.io/aqlab/)
 
 </div>
 
