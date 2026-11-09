@@ -2,7 +2,7 @@
 
 <img src="assets/logo.svg" alt="aqlab" width="88" height="88">
 
-<img src="assets/banner-v3.svg" alt="aqlab — توطين أي تطبيق أندرويد لأي لغة وأي اتجاه نص" width="100%">
+<a href="https://gilgamesh-110.github.io/aqlab/"><img src="assets/banner-v3.svg" alt="aqlab — توطين أي تطبيق أندرويد لأي لغة وأي اتجاه نص" width="100%"></a>
 
 **أي لغة. أي اتجاه. بأمر واحد.**
 

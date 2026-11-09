@@ -2,7 +2,7 @@
 
 <img src="assets/logo.svg" alt="aqlab" width="88" height="88">
 
-<img src="assets/banner-v3.svg" alt="aqlab — localize any Android APK into any language and any text direction. One command migrates strings, mirrors layouts, rebuilds the APK; 227 locales, 258 RTL tags, verified on a real device with zero crashes." width="100%">
+<a href="https://gilgamesh-110.github.io/aqlab/"><img src="assets/banner-v3.svg" alt="aqlab — localize any Android APK into any language and any text direction. One command migrates strings, mirrors layouts, rebuilds the APK; 227 locales, 258 RTL tags, verified on a real device with zero crashes." width="100%"></a>
 
 **Any language. Any direction. One command.**
 
