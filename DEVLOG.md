@@ -493,3 +493,4 @@ and that no credential-shaped string is in the tree before it uploads.
 **Also fixed:** `aqlab --help` ended with `docs: https://github.com/<you>/aqlab`.
 A placeholder. It shipped in every release.
 
+- 2026-11-09 · Round 50 · landing page: language switch (105 nodes, snapshot-before-swap), 11s demo video from real output, comparison table, real-APK diff; found and fixed `--tm` crashing on the TSV `scaffold` writes; CI env was on the wrong step. 666 checks.

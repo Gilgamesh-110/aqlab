@@ -126,6 +126,21 @@ def test_page_switch():
     # and it must not fight the RTL layout
     check("switch flips dir on <html>", "document.documentElement.dir" in page)
 
+    # the footer shipped "0.2.1" in Arabic and "0.2.2" in English at the same
+    # time -- one number, two answers. The version in the page must match the
+    # package, in both languages.
+    import re as _re
+    _m = _re.search(r'__version__\s*=\s*"([^"]+)"',
+                    (ROOT / "aqlab.py").read_text(encoding="utf-8"))
+    version = _m.group(1) if _m else "?"
+    check("footer version matches aqlab.py",
+          f"aqlab {version}" in page, f"expected 'aqlab {version}'")
+    # and Arabic and English must agree with each other
+    pairs = _re.findall(r'data-en="aqlab ([\d.]+)[^"]*">aqlab ([\d.]+)', page)
+    mismatched = [(a, b) for a, b in pairs if a != b]
+    check("footer version reads the same in both languages",
+          not mismatched, f"mismatched: {mismatched}")
+
 
 def main():
     import tempfile
