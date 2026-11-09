@@ -204,12 +204,21 @@ def check_banner_numbers():
         out = subprocess.run([sys.executable, str(ROOT / "tests" / "test_aqlab.py")],
                              capture_output=True, text=True, cwd=ROOT)
         hit = re.search(r"(\d+) checks passed", out.stdout + out.stderr)
+        site = subprocess.run([sys.executable, str(ROOT / "tests" / "test_site.py")],
+                              capture_output=True, text=True, cwd=ROOT)
+        site_hit = re.search(r"(\d+) check\(s\) failed", site.stdout + site.stderr)
         if not hit:
             print("[FAIL] banner-v3.svg: could not count the suite to check the badge")
             bad += 1
-        elif int(m.group(1)) != int(hit.group(1)):
-            print(f"[FAIL] banner-v3.svg: tests badge says {m.group(1)}, suite has {hit.group(1)}")
-            bad += 1
+        else:
+            total = int(hit.group(1))
+            # test_site.py reports failures, not a total; count its [OK] lines,
+            # minus the summary line that starts with "[OK] landing page".
+            oks = re.findall(r"^\[OK\] (.+)$", site.stdout, re.M)
+            total += len([x for x in oks if not x.startswith("landing page")])
+            if int(m.group(1)) != total:
+                print(f"[FAIL] banner-v3.svg: tests badge says {m.group(1)}, suite has {total}")
+                bad += 1
 
     if bad:
         return 1

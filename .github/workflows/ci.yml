@@ -55,14 +55,14 @@ jobs:
 
       - name: README quickstart still matches the docs
         run: python tests/test_readme.py
-
-      - name: Landing page and translation memory
-        run: python tests/test_site.py
         env:
           # No android.jar on the runner, so the 13 APK-dependent checks skip and
           # the suite prints a smaller total than a dev box. The banner badge
           # advertises the full count; the suite step above is the real gate.
           AQLAB_CI: "1"
+
+      - name: Landing page and translation memory
+        run: python tests/test_site.py
 
       - name: CLI smoke
         run: |
