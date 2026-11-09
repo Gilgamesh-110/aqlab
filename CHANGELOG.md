@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-11-09
+
+### Fixed
+- **PyPI's Homepage pointed at the repository, not the site.** The landing page
+  exists and is linked from both READMEs, but the `Homepage` URL on the project
+  metadata -- the one PyPI renders as the project's own site -- still went to
+  GitHub. A check now fails if it stops pointing at the landing page.
+
+### Changed
+- The README banner, the largest element on the page, opened the raw SVG in
+  GitHub's blob viewer. It now opens the landing page.
+- The repository `homepage` field was empty, so the site was not linked in the
+  About box above the fold. It is set now.
+
 ## [0.2.1] — 2026-11-09
 
 ### Fixed

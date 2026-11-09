@@ -112,6 +112,12 @@ def check_package_metadata():
             print(f"[FAIL] pyproject.toml: only {len(kws)} keywords")
             bad += 1
 
+    # The site is the thing a stranger should hit, so Homepage must point at it
+    # and not at the repo -- PyPI renders that link as the project's own site.
+    if 'Homepage = "https://gilgamesh-110.github.io/aqlab/"' not in t:
+        print("[FAIL] pyproject.toml: Homepage does not point at the landing page")
+        bad += 1
+
     if bad:
         return 1
     print("[OK] pyproject metadata describes the any-locale tool")
